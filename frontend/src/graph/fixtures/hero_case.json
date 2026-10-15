@@ -1,0 +1,904 @@
+﻿{
+    "case_id":  "case_ba0c49950c0b",
+    "workspace":  "demo",
+    "entity":  {
+                   "id":  "c_nordharbor",
+                   "name":  "Nord Harbor Logistics Ltd",
+                   "kind":  "Company",
+                   "country":  "CY"
+               },
+    "as_of":  "2024-01-01",
+    "max_hops":  6,
+    "rulepacks":  [
+                      "OFAC",
+                      "EU",
+                      "UK"
+                  ],
+    "mode":  "playbook",
+    "actor_model":  "playbook",
+    "disposition":  "EXPOSED",
+    "reasons":  [
+                    {
+                        "code":  "blocked:OFAC",
+                        "detail":  "OFAC has a blocked result with valid sourced proof.",
+                        "evidence_keys":  [
+                                              "syn:D-p_volkov-prog_ofac",
+                                              "syn:G1-1",
+                                              "syn:G1-2",
+                                              "syn:G1-3"
+                                          ]
+                    },
+                    {
+                        "code":  "blocked:EU",
+                        "detail":  "EU has a blocked result with valid sourced proof.",
+                        "evidence_keys":  [
+                                              "syn:D-p_volkov-prog_eu",
+                                              "syn:G1-1",
+                                              "syn:G1-2",
+                                              "syn:G1-3"
+                                          ]
+                    },
+                    {
+                        "code":  "blocked:UK",
+                        "detail":  "UK has a blocked result with valid sourced proof.",
+                        "evidence_keys":  [
+                                              "syn:D-p_volkov-prog_uk",
+                                              "syn:G1-1",
+                                              "syn:G1-2",
+                                              "syn:G1-3"
+                                          ]
+                    }
+                ],
+    "proposal":  {
+                     "disposition":  "EXPOSED",
+                     "rationale":  "playbook",
+                     "confidence":  1.0,
+                     "evidence_keys":  [
+                                           "syn:D-p_volkov-prog_eu",
+                                           "syn:D-p_volkov-prog_ofac",
+                                           "syn:D-p_volkov-prog_uk",
+                                           "syn:G1-1",
+                                           "syn:G1-2",
+                                           "syn:G1-3"
+                                       ]
+                 },
+    "proposal_overridden":  false,
+    "packs":  {
+                  "OFAC":  {
+                               "rulepack":  "OFAC",
+                               "version":  "ofac-2014-faq398-402+2026-03",
+                               "entity_id":  "c_nordharbor",
+                               "canon":  "c_nordharbor",
+                               "as_of":  "2024-01-01",
+                               "max_hops":  6,
+                               "verdict":  "BLOCKED",
+                               "lo":  65.0,
+                               "hi":  65.0,
+                               "threshold":  50.0,
+                               "inclusive":  true,
+                               "proof":  [
+                                             "syn:D-p_volkov-prog_ofac",
+                                             "syn:G1-1",
+                                             "syn:G1-2",
+                                             "syn:G1-3"
+                                         ],
+                               "decisive":  [
+                                                "syn:D-p_volkov-prog_ofac",
+                                                "syn:G1-1",
+                                                "syn:G1-2",
+                                                "syn:G1-3"
+                                            ],
+                               "decisive_kind":  "counterfactual",
+                               "presumptions":  [
+
+                                                ],
+                               "seeds":  [
+                                             "p_volkov"
+                                         ],
+                               "scope_size":  4,
+                               "scope_truncated":  false,
+                               "data_errors":  [
+
+                                               ],
+                               "caveats":  [
+
+                                           ],
+                               "economic_exposure":  0.52,
+                               "rounds":  4,
+                               "latency_ms":  37,
+                               "interpretation_note":  "Modeled input: direct and indirect ownership is aggregated, including ownership through entities that themselves meet the 50 Percent Rule; threshold is inclusive (50% or more), based on OFAC FAQ 401."
+                           },
+                  "EU":  {
+                             "rulepack":  "EU",
+                             "version":  "eu-bp-11623-24+reg-2025-2037",
+                             "entity_id":  "c_nordharbor",
+                             "canon":  "c_nordharbor",
+                             "as_of":  "2024-01-01",
+                             "max_hops":  6,
+                             "verdict":  "BLOCKED",
+                             "lo":  65.0,
+                             "hi":  65.0,
+                             "threshold":  50.0,
+                             "inclusive":  true,
+                             "proof":  [
+                                           "syn:D-p_volkov-prog_eu",
+                                           "syn:G1-1",
+                                           "syn:G1-2",
+                                           "syn:G1-3"
+                                       ],
+                             "decisive":  [
+                                              "syn:D-p_volkov-prog_eu",
+                                              "syn:G1-1",
+                                              "syn:G1-2",
+                                              "syn:G1-3"
+                                          ],
+                             "decisive_kind":  "counterfactual",
+                             "presumptions":  [
+
+                                              ],
+                             "seeds":  [
+                                           "p_volkov"
+                                       ],
+                             "scope_size":  4,
+                             "scope_truncated":  false,
+                             "data_errors":  [
+
+                                             ],
+                             "caveats":  [
+
+                                         ],
+                             "economic_exposure":  0.52,
+                             "rounds":  4,
+                             "latency_ms":  35,
+                             "interpretation_note":  "Modeled input: Regulation 2025/2037 Article 1(i) says 50% or more for Regulation 269/2014; aggregation/control follow Council Best Practices 11623/24 paras 63-65 and are rebuttable case by case. Chain arithmetic uses full attribution because EU texts give no explicit chain example; that is ShellTrace\u0027s interpretation."
+                         },
+                  "UK":  {
+                             "rulepack":  "UK",
+                             "version":  "ofsi-gg-4.1-2026-05",
+                             "entity_id":  "c_nordharbor",
+                             "canon":  "c_nordharbor",
+                             "as_of":  "2024-01-01",
+                             "max_hops":  6,
+                             "verdict":  "BLOCKED",
+                             "lo":  65.0,
+                             "hi":  65.0,
+                             "threshold":  50.0,
+                             "inclusive":  false,
+                             "proof":  [
+                                           "syn:D-p_volkov-prog_uk",
+                                           "syn:G1-1",
+                                           "syn:G1-2",
+                                           "syn:G1-3"
+                                       ],
+                             "decisive":  [
+                                              "syn:D-p_volkov-prog_uk",
+                                              "syn:G1-1",
+                                              "syn:G1-2",
+                                              "syn:G1-3"
+                                          ],
+                             "decisive_kind":  "counterfactual",
+                             "presumptions":  [
+
+                                              ],
+                             "seeds":  [
+                                           "p_volkov"
+                                       ],
+                             "scope_size":  4,
+                             "scope_truncated":  false,
+                             "data_errors":  [
+
+                                             ],
+                             "caveats":  [
+
+                                         ],
+                             "economic_exposure":  0.52,
+                             "rounds":  4,
+                             "latency_ms":  36,
+                             "interpretation_note":  "Modeled input: more than 50% plus the listed control grounds in OFSI General Guidance 4.1. Different designated persons\u0027 holdings are not simply aggregated absent a joint arrangement or control of rights (OFSI 4.1.4)."
+                         }
+              },
+    "trace":  {
+                  "hops":  4,
+                  "nodes":  [
+                                {
+                                    "id":  "p_volkov",
+                                    "name":  "Arkady Volkov",
+                                    "kind":  "Person",
+                                    "country":  "RU"
+                                },
+                                {
+                                    "id":  "c_meridian",
+                                    "name":  "Meridian Holdings SA",
+                                    "kind":  "Company",
+                                    "country":  "SC"
+                                },
+                                {
+                                    "id":  "c_bluelagoon_alias",
+                                    "name":  "BlueLagoon Cap Limited",
+                                    "kind":  "Company",
+                                    "country":  "VG"
+                                },
+                                {
+                                    "id":  "c_bluelagoon",
+                                    "name":  "Blue Lagoon Capital Ltd",
+                                    "kind":  "Company",
+                                    "country":  "VG"
+                                },
+                                {
+                                    "id":  "c_nordharbor",
+                                    "name":  "Nord Harbor Logistics Ltd",
+                                    "kind":  "Company",
+                                    "country":  "CY"
+                                }
+                            ],
+                  "edges":  [
+                                {
+                                    "k":  "syn:G1-1",
+                                    "type":  "OWNS",
+                                    "from_id":  "p_volkov",
+                                    "to_id":  "c_meridian",
+                                    "pct":  100.0,
+                                    "basis":  "synthetic",
+                                    "role":  null,
+                                    "valid_from":  "2019-01-01",
+                                    "valid_to":  null,
+                                    "src":  "synthetic",
+                                    "src_record":  "G1-1"
+                                },
+                                {
+                                    "k":  "syn:G1-2",
+                                    "type":  "OWNS",
+                                    "from_id":  "c_meridian",
+                                    "to_id":  "c_bluelagoon_alias",
+                                    "pct":  80.0,
+                                    "basis":  "synthetic",
+                                    "role":  null,
+                                    "valid_from":  "2020-03-01",
+                                    "valid_to":  null,
+                                    "src":  "synthetic",
+                                    "src_record":  "G1-2"
+                                },
+                                {
+                                    "k":  "syn:AL-1~r",
+                                    "type":  "SAME_AS",
+                                    "from_id":  "c_bluelagoon_alias",
+                                    "to_id":  "c_bluelagoon",
+                                    "pct":  null,
+                                    "basis":  null,
+                                    "role":  null,
+                                    "valid_from":  null,
+                                    "valid_to":  null,
+                                    "src":  "synthetic",
+                                    "src_record":  "AL-1"
+                                },
+                                {
+                                    "k":  "syn:G1-3",
+                                    "type":  "OWNS",
+                                    "from_id":  "c_bluelagoon",
+                                    "to_id":  "c_nordharbor",
+                                    "pct":  65.0,
+                                    "basis":  "synthetic",
+                                    "role":  null,
+                                    "valid_from":  "2021-06-01",
+                                    "valid_to":  null,
+                                    "src":  "synthetic",
+                                    "src_record":  "G1-3"
+                                }
+                            ],
+                  "designation_key":  "syn:D-p_volkov-prog_eu",
+                  "authority":  "EU",
+                  "program":  "EU Consolidated (synthetic)",
+                  "listed_on":  "2019-04-01",
+                  "mode":  "ownership",
+                  "cypher":  "MATCH p = (t:Entity)-[:OWNS|CONTROLS|SAME_AS*4]-\u003e(s:Entity {id:$id})\nWHERE t \u003c\u003e s AND all(r IN relationships(p) WHERE NOT r.k IN $exclude\n  AND (r.valid_from IS NULL OR r.valid_from \u003c= $as_of)\n  AND (r.valid_to IS NULL OR r.valid_to \u003e= $as_of))\nMATCH (t)-[d:DESIGNATED]-\u003e(pg:Program)\nWHERE pg.authority IN $auth AND NOT d.k IN $exclude\n  AND d.listed_on \u003c= $as_of\n  AND (d.delisted_on IS NULL OR d.delisted_on \u003e $as_of)\nRETURN nodes(p) AS ns, relationships(p) AS rs, length(p) AS hops,\n       d.k AS dk, pg.authority AS authority, pg.name AS program,\n       d.listed_on AS listed_on\nLIMIT $path_limit",
+                  "latency_ms":  61
+              },
+    "red_flags":  [
+
+                  ],
+    "alias_candidates":  [
+
+                         ],
+    "prior_cases":  [
+                        {
+                            "case_id":  "case_d842d601f6ca",
+                            "entity_id":  "c_nordharbor",
+                            "as_of":  "2024-01-01",
+                            "disposition":  "EXPOSED",
+                            "opened_at":  "2026-10-15T11:19:39+00:00"
+                        },
+                        {
+                            "case_id":  "case_468d90d1e2f6",
+                            "entity_id":  "c_nordharbor",
+                            "as_of":  "2024-01-01",
+                            "disposition":  "EXPOSED",
+                            "opened_at":  "2026-10-15T11:19:36+00:00"
+                        },
+                        {
+                            "case_id":  "case_4c493bcf04f3",
+                            "entity_id":  "c_nordharbor",
+                            "as_of":  "2024-01-01",
+                            "disposition":  "EXPOSED",
+                            "opened_at":  "2026-10-15T11:16:59+00:00"
+                        },
+                        {
+                            "case_id":  "case_7bccbd8986b1",
+                            "entity_id":  "c_nordharbor",
+                            "as_of":  "2024-01-01",
+                            "disposition":  "EXPOSED",
+                            "opened_at":  "2026-10-15T11:16:56+00:00"
+                        },
+                        {
+                            "case_id":  "case_25b60c42fc8d",
+                            "entity_id":  "c_nordharbor",
+                            "as_of":  "2024-01-01",
+                            "disposition":  "EXPOSED",
+                            "opened_at":  "2026-10-15T11:14:31+00:00"
+                        },
+                        {
+                            "case_id":  "case_1ef26e154142",
+                            "entity_id":  "c_nordharbor",
+                            "as_of":  "2024-01-01",
+                            "disposition":  "EXPOSED",
+                            "opened_at":  "2026-10-15T11:13:13+00:00"
+                        },
+                        {
+                            "case_id":  "case_132257ff2f3e",
+                            "entity_id":  "c_nordharbor",
+                            "as_of":  "2024-01-01",
+                            "disposition":  "EXPOSED",
+                            "opened_at":  "2026-10-15T11:09:10+00:00"
+                        },
+                        {
+                            "case_id":  "case_bee46ae55337",
+                            "entity_id":  "c_nordharbor",
+                            "as_of":  "2024-01-01",
+                            "disposition":  "EXPOSED",
+                            "opened_at":  "2026-10-15T11:08:34+00:00"
+                        },
+                        {
+                            "case_id":  "case_14928d2eb2f3",
+                            "entity_id":  "c_nordharbor",
+                            "as_of":  "2024-01-01",
+                            "disposition":  "EXPOSED",
+                            "opened_at":  "2026-10-15T11:08:13+00:00"
+                        }
+                    ],
+    "stakes":  [
+                   {
+                       "owner_id":  "c_bluelagoon",
+                       "owner_name":  "Blue Lagoon Capital Ltd",
+                       "pct":  65.0,
+                       "basis":  "synthetic",
+                       "valid_from":  "2021-06-01",
+                       "valid_to":  null,
+                       "k":  "syn:G1-3"
+                   }
+               ],
+    "evidence":  {
+                     "syn:AL-1~r":  {
+                                        "k":  "syn:AL-1~r",
+                                        "type":  "SAME_AS",
+                                        "from_id":  "c_bluelagoon_alias",
+                                        "from_name":  "BlueLagoon Cap Limited",
+                                        "to_id":  "c_bluelagoon",
+                                        "to_name":  "Blue Lagoon Capital Ltd",
+                                        "pct":  null,
+                                        "basis":  null,
+                                        "role":  null,
+                                        "valid_from":  null,
+                                        "valid_to":  null,
+                                        "listed_on":  null,
+                                        "delisted_on":  null,
+                                        "src":  "synthetic",
+                                        "src_record":  "AL-1",
+                                        "snapshot":  "synthetic-v1",
+                                        "licence":  "CC0-1.0 (synthetic, disclosed)",
+                                        "url":  null
+                                    },
+                     "syn:D-p_volkov-prog_eu":  {
+                                                    "k":  "syn:D-p_volkov-prog_eu",
+                                                    "type":  "DESIGNATED",
+                                                    "from_id":  "p_volkov",
+                                                    "from_name":  "Arkady Volkov",
+                                                    "to_id":  "prog_eu",
+                                                    "to_name":  "EU Consolidated (synthetic)",
+                                                    "pct":  null,
+                                                    "basis":  null,
+                                                    "role":  null,
+                                                    "valid_from":  null,
+                                                    "valid_to":  null,
+                                                    "listed_on":  "2019-04-01",
+                                                    "delisted_on":  null,
+                                                    "src":  "synthetic",
+                                                    "src_record":  "D-p_volkov-prog_eu",
+                                                    "snapshot":  "synthetic-v1",
+                                                    "licence":  "CC0-1.0 (synthetic, disclosed)",
+                                                    "url":  null
+                                                },
+                     "syn:D-p_volkov-prog_ofac":  {
+                                                      "k":  "syn:D-p_volkov-prog_ofac",
+                                                      "type":  "DESIGNATED",
+                                                      "from_id":  "p_volkov",
+                                                      "from_name":  "Arkady Volkov",
+                                                      "to_id":  "prog_ofac",
+                                                      "to_name":  "OFAC SDN (synthetic)",
+                                                      "pct":  null,
+                                                      "basis":  null,
+                                                      "role":  null,
+                                                      "valid_from":  null,
+                                                      "valid_to":  null,
+                                                      "listed_on":  "2019-04-01",
+                                                      "delisted_on":  null,
+                                                      "src":  "synthetic",
+                                                      "src_record":  "D-p_volkov-prog_ofac",
+                                                      "snapshot":  "synthetic-v1",
+                                                      "licence":  "CC0-1.0 (synthetic, disclosed)",
+                                                      "url":  null
+                                                  },
+                     "syn:D-p_volkov-prog_uk":  {
+                                                    "k":  "syn:D-p_volkov-prog_uk",
+                                                    "type":  "DESIGNATED",
+                                                    "from_id":  "p_volkov",
+                                                    "from_name":  "Arkady Volkov",
+                                                    "to_id":  "prog_uk",
+                                                    "to_name":  "UK Sanctions List (synthetic)",
+                                                    "pct":  null,
+                                                    "basis":  null,
+                                                    "role":  null,
+                                                    "valid_from":  null,
+                                                    "valid_to":  null,
+                                                    "listed_on":  "2019-04-01",
+                                                    "delisted_on":  null,
+                                                    "src":  "synthetic",
+                                                    "src_record":  "D-p_volkov-prog_uk",
+                                                    "snapshot":  "synthetic-v1",
+                                                    "licence":  "CC0-1.0 (synthetic, disclosed)",
+                                                    "url":  null
+                                                },
+                     "syn:G1-1":  {
+                                      "k":  "syn:G1-1",
+                                      "type":  "OWNS",
+                                      "from_id":  "p_volkov",
+                                      "from_name":  "Arkady Volkov",
+                                      "to_id":  "c_meridian",
+                                      "to_name":  "Meridian Holdings SA",
+                                      "pct":  100.0,
+                                      "basis":  "synthetic",
+                                      "role":  null,
+                                      "valid_from":  "2019-01-01",
+                                      "valid_to":  null,
+                                      "listed_on":  null,
+                                      "delisted_on":  null,
+                                      "src":  "synthetic",
+                                      "src_record":  "G1-1",
+                                      "snapshot":  "synthetic-v1",
+                                      "licence":  "CC0-1.0 (synthetic, disclosed)",
+                                      "url":  null
+                                  },
+                     "syn:G1-2":  {
+                                      "k":  "syn:G1-2",
+                                      "type":  "OWNS",
+                                      "from_id":  "c_meridian",
+                                      "from_name":  "Meridian Holdings SA",
+                                      "to_id":  "c_bluelagoon_alias",
+                                      "to_name":  "BlueLagoon Cap Limited",
+                                      "pct":  80.0,
+                                      "basis":  "synthetic",
+                                      "role":  null,
+                                      "valid_from":  "2020-03-01",
+                                      "valid_to":  null,
+                                      "listed_on":  null,
+                                      "delisted_on":  null,
+                                      "src":  "synthetic",
+                                      "src_record":  "G1-2",
+                                      "snapshot":  "synthetic-v1",
+                                      "licence":  "CC0-1.0 (synthetic, disclosed)",
+                                      "url":  null
+                                  },
+                     "syn:G1-3":  {
+                                      "k":  "syn:G1-3",
+                                      "type":  "OWNS",
+                                      "from_id":  "c_bluelagoon",
+                                      "from_name":  "Blue Lagoon Capital Ltd",
+                                      "to_id":  "c_nordharbor",
+                                      "to_name":  "Nord Harbor Logistics Ltd",
+                                      "pct":  65.0,
+                                      "basis":  "synthetic",
+                                      "role":  null,
+                                      "valid_from":  "2021-06-01",
+                                      "valid_to":  null,
+                                      "listed_on":  null,
+                                      "delisted_on":  null,
+                                      "src":  "synthetic",
+                                      "src_record":  "G1-3",
+                                      "snapshot":  "synthetic-v1",
+                                      "licence":  "CC0-1.0 (synthetic, disclosed)",
+                                      "url":  null
+                                  }
+                 },
+    "bounds":  {
+                   "as_of":  "2024-01-01",
+                   "max_hops":  6,
+                   "rel_scope":  [
+                                     "OWNS",
+                                     "CONTROLS",
+                                     "SAME_AS (accepted)"
+                                 ],
+                   "rulepacks":  [
+                                     "OFAC",
+                                     "EU",
+                                     "UK"
+                                 ],
+                   "snapshot":  "synthetic-v1",
+                   "scope_nodes":  4,
+                   "truncated":  false
+               },
+    "steps":  [
+                  {
+                      "kind":  "intake",
+                      "tool":  null,
+                      "args":  {
+                                   "as_of":  "2024-01-01",
+                                   "entity_id":  "c_nordharbor",
+                                   "max_hops":  6,
+                                   "mode":  "playbook",
+                                   "rulepacks":  [
+                                                     "OFAC",
+                                                     "EU",
+                                                     "UK"
+                                                 ],
+                                   "workspace":  "demo"
+                               },
+                      "result_digest":  null,
+                      "evidence_keys":  [
+
+                                        ],
+                      "probability":  null,
+                      "rationale":  null,
+                      "latency_ms":  0,
+                      "actor":  "system",
+                      "fallback_reason":  null,
+                      "seq":  1,
+                      "prev_hash":  "GENESIS",
+                      "hash":  "59141188354ba0501bac34597d78b2dc3afe3cc8584457aaaa70b1344473425e",
+                      "at":  "2026-10-15T11:22:25+00:00"
+                  },
+                  {
+                      "kind":  "tool",
+                      "tool":  "case_history",
+                      "args":  {
+                                   "as_of":  "2024-01-01",
+                                   "entity_id":  "c_nordharbor",
+                                   "workspace":  "demo"
+                               },
+                      "result_digest":  "02144df0f4770c2e",
+                      "evidence_keys":  [
+
+                                        ],
+                      "probability":  null,
+                      "rationale":  "mandatory policy completion",
+                      "latency_ms":  47,
+                      "actor":  "playbook",
+                      "fallback_reason":  null,
+                      "seq":  2,
+                      "prev_hash":  "59141188354ba0501bac34597d78b2dc3afe3cc8584457aaaa70b1344473425e",
+                      "hash":  "5c7512ca9ea77c2eaa406b547377b57ae4a21c6fcc4ae5306acf2a275f307b0e",
+                      "at":  "2026-10-15T11:22:25+00:00"
+                  },
+                  {
+                      "kind":  "tool",
+                      "tool":  "exposure_trace",
+                      "args":  {
+                                   "as_of":  "2024-01-01",
+                                   "authorities":  [
+                                                       "OFAC",
+                                                       "EU",
+                                                       "UK"
+                                                   ],
+                                   "entity_id":  "c_nordharbor",
+                                   "max_hops":  6,
+                                   "mode":  "ownership",
+                                   "workspace":  "demo"
+                               },
+                      "result_digest":  "6b84d8024e392211",
+                      "evidence_keys":  [
+                                            "syn:AL-1~r",
+                                            "syn:D-p_volkov-prog_eu",
+                                            "syn:G1-1",
+                                            "syn:G1-2",
+                                            "syn:G1-3"
+                                        ],
+                      "probability":  null,
+                      "rationale":  "mandatory policy completion",
+                      "latency_ms":  61,
+                      "actor":  "playbook",
+                      "fallback_reason":  null,
+                      "seq":  3,
+                      "prev_hash":  "5c7512ca9ea77c2eaa406b547377b57ae4a21c6fcc4ae5306acf2a275f307b0e",
+                      "hash":  "a6fb4152164ef83294b084bc0bb67fb8333f78c48f5a2054a781794cbdcd8bff",
+                      "at":  "2026-10-15T11:22:25+00:00"
+                  },
+                  {
+                      "kind":  "tool",
+                      "tool":  "rulepack_evaluate",
+                      "args":  {
+                                   "as_of":  "2024-01-01",
+                                   "counterfactuals":  true,
+                                   "entity_id":  "c_nordharbor",
+                                   "exclude_keys":  [
+
+                                                    ],
+                                   "max_hops":  6,
+                                   "rulepack":  "OFAC",
+                                   "workspace":  "demo"
+                               },
+                      "result_digest":  "faf84c2a18e3f4ba",
+                      "evidence_keys":  [
+                                            "syn:D-p_volkov-prog_ofac",
+                                            "syn:G1-1",
+                                            "syn:G1-2",
+                                            "syn:G1-3"
+                                        ],
+                      "probability":  null,
+                      "rationale":  "mandatory policy completion",
+                      "latency_ms":  78,
+                      "actor":  "playbook",
+                      "fallback_reason":  null,
+                      "seq":  4,
+                      "prev_hash":  "a6fb4152164ef83294b084bc0bb67fb8333f78c48f5a2054a781794cbdcd8bff",
+                      "hash":  "d4ce9d0c396e02850f73c6e9a6b8d79ffe660fff4f58ed92a3e1fdb4c984d948",
+                      "at":  "2026-10-15T11:22:25+00:00"
+                  },
+                  {
+                      "kind":  "tool",
+                      "tool":  "rulepack_evaluate",
+                      "args":  {
+                                   "as_of":  "2024-01-01",
+                                   "counterfactuals":  true,
+                                   "entity_id":  "c_nordharbor",
+                                   "exclude_keys":  [
+
+                                                    ],
+                                   "max_hops":  6,
+                                   "rulepack":  "EU",
+                                   "workspace":  "demo"
+                               },
+                      "result_digest":  "e565fded01bfc675",
+                      "evidence_keys":  [
+                                            "syn:D-p_volkov-prog_eu",
+                                            "syn:G1-1",
+                                            "syn:G1-2",
+                                            "syn:G1-3"
+                                        ],
+                      "probability":  null,
+                      "rationale":  "mandatory policy completion",
+                      "latency_ms":  62,
+                      "actor":  "playbook",
+                      "fallback_reason":  null,
+                      "seq":  5,
+                      "prev_hash":  "d4ce9d0c396e02850f73c6e9a6b8d79ffe660fff4f58ed92a3e1fdb4c984d948",
+                      "hash":  "49c80fa4a118657668221abb9dd3c0b46fe496aa05efd7533314ce40489dd9a0",
+                      "at":  "2026-10-15T11:22:25+00:00"
+                  },
+                  {
+                      "kind":  "tool",
+                      "tool":  "rulepack_evaluate",
+                      "args":  {
+                                   "as_of":  "2024-01-01",
+                                   "counterfactuals":  true,
+                                   "entity_id":  "c_nordharbor",
+                                   "exclude_keys":  [
+
+                                                    ],
+                                   "max_hops":  6,
+                                   "rulepack":  "UK",
+                                   "workspace":  "demo"
+                               },
+                      "result_digest":  "0bcfbb45ce269bc1",
+                      "evidence_keys":  [
+                                            "syn:D-p_volkov-prog_uk",
+                                            "syn:G1-1",
+                                            "syn:G1-2",
+                                            "syn:G1-3"
+                                        ],
+                      "probability":  null,
+                      "rationale":  "mandatory policy completion",
+                      "latency_ms":  62,
+                      "actor":  "playbook",
+                      "fallback_reason":  null,
+                      "seq":  6,
+                      "prev_hash":  "49c80fa4a118657668221abb9dd3c0b46fe496aa05efd7533314ce40489dd9a0",
+                      "hash":  "5164ae28c310013576d5bf7a936a4bb65bbeb4b88ac64040fe15c3283beee3d3",
+                      "at":  "2026-10-15T11:22:25+00:00"
+                  },
+                  {
+                      "kind":  "tool",
+                      "tool":  "red_flags",
+                      "args":  {
+                                   "as_of":  "2024-01-01",
+                                   "authorities":  [
+                                                       "OFAC",
+                                                       "EU",
+                                                       "UK"
+                                                   ],
+                                   "entity_id":  "c_nordharbor",
+                                   "max_hops":  6,
+                                   "workspace":  "demo"
+                               },
+                      "result_digest":  "ccbb299897f0a689",
+                      "evidence_keys":  [
+
+                                        ],
+                      "probability":  null,
+                      "rationale":  "mandatory policy completion",
+                      "latency_ms":  30,
+                      "actor":  "playbook",
+                      "fallback_reason":  null,
+                      "seq":  7,
+                      "prev_hash":  "5164ae28c310013576d5bf7a936a4bb65bbeb4b88ac64040fe15c3283beee3d3",
+                      "hash":  "7c574eb3760ea806baf5ccfd2b8603d0c4d3e33bcd4b91b7d91bedea1e18cd92",
+                      "at":  "2026-10-15T11:22:25+00:00"
+                  },
+                  {
+                      "kind":  "tool",
+                      "tool":  "alias_candidates",
+                      "args":  {
+                                   "entity_id":  "c_nordharbor",
+                                   "limit":  10,
+                                   "workspace":  "demo"
+                               },
+                      "result_digest":  "1cdacf60b6a3fc50",
+                      "evidence_keys":  [
+
+                                        ],
+                      "probability":  null,
+                      "rationale":  "mandatory policy completion",
+                      "latency_ms":  16,
+                      "actor":  "playbook",
+                      "fallback_reason":  null,
+                      "seq":  8,
+                      "prev_hash":  "7c574eb3760ea806baf5ccfd2b8603d0c4d3e33bcd4b91b7d91bedea1e18cd92",
+                      "hash":  "9b00111d460c1fe0f7402517d352ef46871cd723869d606cfc94be78ac6ceed1",
+                      "at":  "2026-10-15T11:22:25+00:00"
+                  },
+                  {
+                      "kind":  "tool",
+                      "tool":  "ownership_stakes",
+                      "args":  {
+                                   "as_of":  "2024-01-01",
+                                   "entity_id":  "c_nordharbor",
+                                   "workspace":  "demo"
+                               },
+                      "result_digest":  "d9fcc230a8da9822",
+                      "evidence_keys":  [
+                                            "syn:G1-3"
+                                        ],
+                      "probability":  null,
+                      "rationale":  "mandatory policy completion",
+                      "latency_ms":  31,
+                      "actor":  "playbook",
+                      "fallback_reason":  null,
+                      "seq":  9,
+                      "prev_hash":  "9b00111d460c1fe0f7402517d352ef46871cd723869d606cfc94be78ac6ceed1",
+                      "hash":  "a0e95d2fdc7755745976bf638284ddd6dc99e9ffaa04fa33d3234044d0461abb",
+                      "at":  "2026-10-15T11:22:25+00:00"
+                  },
+                  {
+                      "kind":  "tool",
+                      "tool":  "alias_candidates",
+                      "args":  {
+                                   "as_of":  "2024-01-01",
+                                   "authorities":  [
+                                                       "OFAC",
+                                                       "EU",
+                                                       "UK"
+                                                   ],
+                                   "entity_id":  "c_nordharbor",
+                                   "limit":  10,
+                                   "max_hops":  6,
+                                   "workspace":  "demo"
+                               },
+                      "result_digest":  "1cdacf60b6a3fc50",
+                      "evidence_keys":  [
+
+                                        ],
+                      "probability":  null,
+                      "rationale":  "check pending aliases across the dated ownership scope",
+                      "latency_ms":  31,
+                      "actor":  "playbook",
+                      "fallback_reason":  null,
+                      "seq":  10,
+                      "prev_hash":  "a0e95d2fdc7755745976bf638284ddd6dc99e9ffaa04fa33d3234044d0461abb",
+                      "hash":  "f7ad6ae6d73b640a3c8f38a4733e1f1adfbb23cb7d5e1aafcb60cfbe1d318d42",
+                      "at":  "2026-10-15T11:22:25+00:00"
+                  },
+                  {
+                      "kind":  "tool",
+                      "tool":  "evidence_get",
+                      "args":  {
+                                   "keys":  [
+                                                "syn:AL-1~r",
+                                                "syn:D-p_volkov-prog_eu",
+                                                "syn:D-p_volkov-prog_ofac",
+                                                "syn:D-p_volkov-prog_uk",
+                                                "syn:G1-1",
+                                                "syn:G1-2",
+                                                "syn:G1-3"
+                                            ],
+                                   "workspace":  "demo"
+                               },
+                      "result_digest":  "1fc15f125fa020e2",
+                      "evidence_keys":  [
+                                            "syn:AL-1~r",
+                                            "syn:D-p_volkov-prog_eu",
+                                            "syn:D-p_volkov-prog_ofac",
+                                            "syn:D-p_volkov-prog_uk",
+                                            "syn:G1-1",
+                                            "syn:G1-2",
+                                            "syn:G1-3"
+                                        ],
+                      "probability":  null,
+                      "rationale":  "collect evidence for the deterministic decision",
+                      "latency_ms":  46,
+                      "actor":  "policy",
+                      "fallback_reason":  null,
+                      "seq":  11,
+                      "prev_hash":  "f7ad6ae6d73b640a3c8f38a4733e1f1adfbb23cb7d5e1aafcb60cfbe1d318d42",
+                      "hash":  "0312ab63fa63d7ef518d26a972eb3822a6ea2c5ae6d9eec3b3f14cdb1b2f0476",
+                      "at":  "2026-10-15T11:22:25+00:00"
+                  },
+                  {
+                      "kind":  "proposal",
+                      "tool":  null,
+                      "args":  {
+                                   "disposition":  "EXPOSED"
+                               },
+                      "result_digest":  "04a93bcd8744de11",
+                      "evidence_keys":  [
+                                            "syn:D-p_volkov-prog_eu",
+                                            "syn:D-p_volkov-prog_ofac",
+                                            "syn:D-p_volkov-prog_uk",
+                                            "syn:G1-1",
+                                            "syn:G1-2",
+                                            "syn:G1-3"
+                                        ],
+                      "probability":  1.0,
+                      "rationale":  "playbook",
+                      "latency_ms":  0,
+                      "actor":  "playbook",
+                      "fallback_reason":  null,
+                      "seq":  12,
+                      "prev_hash":  "0312ab63fa63d7ef518d26a972eb3822a6ea2c5ae6d9eec3b3f14cdb1b2f0476",
+                      "hash":  "04919e920c627f89654ed894205b75e70ebfac69270ebebad15721640086e59e",
+                      "at":  "2026-10-15T11:22:25+00:00"
+                  },
+                  {
+                      "kind":  "authorise",
+                      "tool":  null,
+                      "args":  {
+                                   "disposition":  "EXPOSED"
+                               },
+                      "result_digest":  "8dbcd12708e8d4a4",
+                      "evidence_keys":  [
+                                            "syn:D-p_volkov-prog_eu",
+                                            "syn:D-p_volkov-prog_ofac",
+                                            "syn:D-p_volkov-prog_uk",
+                                            "syn:G1-1",
+                                            "syn:G1-2",
+                                            "syn:G1-3"
+                                        ],
+                      "probability":  null,
+                      "rationale":  "OFAC has a blocked result with valid sourced proof.",
+                      "latency_ms":  0,
+                      "actor":  "policy",
+                      "fallback_reason":  null,
+                      "seq":  13,
+                      "prev_hash":  "04919e920c627f89654ed894205b75e70ebfac69270ebebad15721640086e59e",
+                      "hash":  "f84bc8f8f3d1f960c8364bfe96d90dc422e0a070191e5ec86efa186214c509c3",
+                      "at":  "2026-10-15T11:22:25+00:00"
+                  }
+              ],
+    "latency_ms":  532,
+    "snapshot":  "synthetic-v1"
+}
