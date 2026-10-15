@@ -6,6 +6,8 @@ from shelltrace.models import (
     RedFlag,
 )
 from shelltrace.agent.authorise import authorise, bounds_sentence, proof_is_valid
+from shelltrace.rulepacks import get_pack
+import pytest
 
 
 def pr(
@@ -19,16 +21,16 @@ def pr(
 ):
     return PackResult(
         rulepack=pack,
-        version=f"{pack}-test",
+        version=get_pack(pack).version,
         entity_id="target",
         canon="target",
         as_of="2024-01-01",
         max_hops=6,
         verdict=verdict,
-        lo=0.0,
-        hi=0.0,
-        threshold=50.0,
-        inclusive=True,
+        lo=(100.0 if verdict == "BLOCKED" else 0.0),
+        hi=(100.0 if verdict in ("BLOCKED", "INDETERMINATE") else 0.0),
+        threshold=get_pack(pack).threshold,
+        inclusive=get_pack(pack).inclusive,
         proof=list(proof),
         decisive=list(decisive),
         decisive_kind="none" if not decisive else "unknown_or_conflict",
@@ -90,22 +92,33 @@ def bounds(*, rulepacks=("OFAC",), truncated=False):
 
 
 def test_blocked_with_valid_proof_is_exposed():
-    pack = pr("OFAC", "BLOCKED", proof=["own-1"])
+    pack = pr("OFAC", "BLOCKED", proof=["own-1", "designation"])
 
     result = authorise(
-        {"OFAC": pack}, [], [], {"own-1": ev("own-1")}, bounds(), []
+        {"OFAC": pack}, [], [], {
+            "own-1": ev("own-1"),
+            "designation": ev("designation", type="DESIGNATED", listed_on="2020-01-01"),
+        }, bounds(), []
     )
 
     assert result.disposition == "EXPOSED"
     assert result.reasons[0].code == "blocked:OFAC"
-    assert result.reasons[0].evidence_keys == ["own-1"]
+    assert result.reasons[0].evidence_keys == ["own-1", "designation"]
 
 
 def test_blocked_with_missing_source_escalates():
-    pack = pr("OFAC", "BLOCKED", proof=["own-1"])
+    pack = pr("OFAC", "BLOCKED", proof=["own-1", "designation"])
 
     result = authorise(
-        {"OFAC": pack}, [], [], {"own-1": ev("own-1", src=None)}, bounds(), []
+        {"OFAC": pack},
+        [],
+        [],
+        {
+            "own-1": ev("own-1", src=None),
+            "designation": ev("designation", type="DESIGNATED", listed_on="2020-01-01"),
+        },
+        bounds(),
+        [],
     )
 
     assert result.disposition == "ESCALATE"
@@ -113,13 +126,16 @@ def test_blocked_with_missing_source_escalates():
 
 
 def test_blocked_with_expired_proof_edge_escalates():
-    pack = pr("OFAC", "BLOCKED", proof=["own-1"])
+    pack = pr("OFAC", "BLOCKED", proof=["own-1", "designation"])
 
     result = authorise(
         {"OFAC": pack},
         [],
         [],
-        {"own-1": ev("own-1", valid_to="2023-12-31")},
+        {
+            "own-1": ev("own-1", valid_to="2023-12-31"),
+            "designation": ev("designation", type="DESIGNATED", listed_on="2020-01-01"),
+        },
         bounds(),
         [],
     )
@@ -171,13 +187,14 @@ def test_not_blocked_result_with_different_hop_bound_cannot_clear():
 
 
 def test_ownership_proof_validity_includes_both_endpoints():
-    pack = pr("OFAC", "BLOCKED", proof=["own-1"])
+    pack = pr("OFAC", "BLOCKED", proof=["own-1", "designation"])
     evidence = {
         "own-1": ev(
             "own-1",
             valid_from="2024-01-01",
             valid_to="2024-01-01",
-        )
+        ),
+        "designation": ev("designation", type="DESIGNATED", listed_on="2020-01-01"),
     }
 
     assert proof_is_valid(pack, evidence, "2024-01-01") is True
@@ -327,6 +344,30 @@ def test_reasons_follow_rule_and_pack_order():
     ]
 
 
+def test_escalation_category_order_precedes_pack_order():
+    packs = {
+        "EU": pr("EU", "PRESUMED_CONTROLLED", presumptions=["presume-eu"]),
+        "OFAC": pr("OFAC", "INDETERMINATE", decisive=["unknown-ofac"]),
+        "UK": pr("UK", "BLOCKED"),
+    }
+
+    result = authorise(
+        packs,
+        [],
+        [],
+        {},
+        bounds(rulepacks=("EU", "OFAC", "UK")),
+        [],
+    )
+
+    assert result.disposition == "ESCALATE"
+    assert [reason.code for reason in result.reasons] == [
+        "proof_invalid:UK",
+        "indeterminate:OFAC",
+        "presumed_control:EU",
+    ]
+
+
 def test_unevaluated_pack_escalates_instead_of_returning_clear():
     result = authorise(
         {"OFAC": pr("OFAC", "NOT_BLOCKED")},
@@ -358,11 +399,19 @@ def test_bounds_level_truncation_prevents_clear():
 def test_exposed_keeps_escalation_reasons():
     packs = {
         "UK": pr("UK", "INDETERMINATE", decisive=["unknown-uk"]),
-        "OFAC": pr("OFAC", "BLOCKED", proof=["own-1"]),
+        "OFAC": pr("OFAC", "BLOCKED", proof=["own-1", "designation"]),
     }
 
     result = authorise(
-        packs, [], [], {"own-1": ev("own-1")}, bounds(rulepacks=("OFAC", "UK")), []
+        packs,
+        [],
+        [],
+        {
+            "own-1": ev("own-1"),
+            "designation": ev("designation", type="DESIGNATED", listed_on="2020-01-01"),
+        },
+        bounds(rulepacks=("OFAC", "UK")),
+        [],
     )
 
     assert result.disposition == "EXPOSED"
@@ -414,3 +463,124 @@ def test_empty_rulepack_bounds_never_returns_clear():
 
     assert result.disposition == "ESCALATE"
     assert [reason.code for reason in result.reasons] == ["no_rulepacks"]
+
+
+@pytest.mark.parametrize("field,value", [
+    ("version", "wrong-version"),
+    ("threshold", 49.0),
+    ("inclusive", False),
+])
+def test_pack_policy_metadata_mismatch_is_unevaluated(field, value):
+    pack = pr("OFAC", "NOT_BLOCKED").model_copy(update={field: value})
+
+    result = authorise({"OFAC": pack}, [], [], {}, bounds(), [])
+
+    assert result.disposition == "ESCALATE"
+    assert [reason.code for reason in result.reasons] == ["pack_not_evaluated:OFAC"]
+
+
+@pytest.mark.parametrize(
+    "other_entity,other_canon",
+    [("entity-b", "canon-a"), ("entity-a", "canon-b"), ("entity-b", "canon-b")],
+)
+def test_mixed_entity_id_or_canon_results_are_all_unevaluated(other_entity, other_canon):
+    packs = {
+        "OFAC": pr("OFAC", "BLOCKED", proof=["designation"]).model_copy(
+            update={"entity_id": "entity-a", "canon": "canon-a"}
+        ),
+        "EU": pr("EU", "NOT_BLOCKED").model_copy(
+            update={"entity_id": other_entity, "canon": other_canon}
+        ),
+    }
+
+    result = authorise(
+        packs,
+        [],
+        [],
+        {"designation": ev("designation", type="DESIGNATED", listed_on="2020-01-01")},
+        bounds(rulepacks=("OFAC", "EU")),
+        [],
+    )
+
+    assert result.disposition == "ESCALATE"
+    assert [reason.code for reason in result.reasons] == [
+        "pack_not_evaluated:OFAC",
+        "pack_not_evaluated:EU",
+    ]
+
+
+@pytest.mark.parametrize("updates", [
+    {"lo": float("nan"), "hi": 100.0},
+    {"lo": 0.0, "hi": float("inf")},
+    {"lo": 80.0, "hi": 20.0},
+    {"lo": -1.0, "hi": 20.0},
+    {"lo": 20.0, "hi": 101.0},
+    {"lo": None, "hi": 20.0},
+])
+def test_nonfinite_or_out_of_range_or_reversed_intervals_are_unevaluated(updates):
+    pack = pr("OFAC", "NOT_BLOCKED").model_copy(update=updates)
+
+    result = authorise({"OFAC": pack}, [], [], {}, bounds(), [])
+
+    assert result.disposition == "ESCALATE"
+    assert [reason.code for reason in result.reasons] == ["pack_not_evaluated:OFAC"]
+
+
+@pytest.mark.parametrize("verdict,lo,hi", [
+    ("BLOCKED", 49.0, 100.0),
+    ("NOT_BLOCKED", 0.0, 50.0),
+    ("INDETERMINATE", 50.0, 80.0),
+    ("INDETERMINATE", 0.0, 49.0),
+    ("PRESUMED_CONTROLLED", 0.0, 50.0),
+])
+def test_verdict_inconsistent_with_interval_is_unevaluated(verdict, lo, hi):
+    pack = pr("OFAC", verdict).model_copy(update={"lo": lo, "hi": hi})
+
+    result = authorise({"OFAC": pack}, [], [], {}, bounds(), [])
+
+    assert result.disposition == "ESCALATE"
+    assert [reason.code for reason in result.reasons] == ["pack_not_evaluated:OFAC"]
+
+
+@pytest.mark.parametrize("rel_type", ["REGISTERED_AT", "CONTROLS", "OFFICER_OF", "SAME_AS"])
+def test_contextual_evidence_cannot_support_blocked_proof(rel_type):
+    pack = pr("OFAC", "BLOCKED", proof=["designation", "context"])
+    evidence = {
+        "designation": ev("designation", type="DESIGNATED", listed_on="2020-01-01"),
+        "context": ev("context", type=rel_type),
+    }
+
+    assert proof_is_valid(pack, evidence, "2024-01-01") is False
+
+
+def test_ownership_proof_requires_active_designation_dependency():
+    pack = pr("OFAC", "BLOCKED", proof=["own-1"])
+
+    assert proof_is_valid(pack, {"own-1": ev("own-1")}, "2024-01-01") is False
+
+
+def test_ownership_proof_with_active_designation_dependency_is_valid():
+    pack = pr("OFAC", "BLOCKED", proof=["own-1", "designation"])
+    evidence = {
+        "own-1": ev("own-1"),
+        "designation": ev("designation", type="DESIGNATED", listed_on="2020-01-01"),
+    }
+
+    assert proof_is_valid(pack, evidence, "2024-01-01") is True
+
+
+def test_uk_strict_threshold_boundary_matches_pack_policy():
+    at_threshold = pr("UK", "NOT_BLOCKED").model_copy(update={"hi": 50.0})
+    result = authorise(
+        {"UK": at_threshold}, [], [], {}, bounds(rulepacks=("UK",)), []
+    )
+    assert result.disposition == "CLEAR_WITHIN_BOUNDS"
+
+    straddling = pr("UK", "INDETERMINATE").model_copy(
+        update={"lo": 50.0, "hi": 50.01}
+    )
+    result = authorise(
+        {"UK": straddling}, [], [], {}, bounds(rulepacks=("UK",)), []
+    )
+    assert result.disposition == "ESCALATE"
+    assert result.reasons[0].code == "indeterminate:UK"

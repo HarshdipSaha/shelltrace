@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+from math import isfinite
 from typing import Mapping
 
 from ..models import (
@@ -12,6 +13,7 @@ from ..models import (
     Reason,
     RedFlag,
 )
+from ..rulepacks import get_pack
 
 
 def _parse_date(value: str | None) -> date | None:
@@ -33,6 +35,7 @@ def proof_is_valid(
     if as_of_date is None or pack.as_of != as_of or not pack.proof:
         return False
 
+    has_designation = False
     for key in pack.proof:
         item = evidence.get(key)
         if (
@@ -44,6 +47,7 @@ def proof_is_valid(
             return False
 
         if item.type == "DESIGNATED":
+            has_designation = True
             listed_on = _parse_date(item.listed_on)
             delisted_on = _parse_date(item.delisted_on)
             if listed_on is None or listed_on > as_of_date:
@@ -54,6 +58,8 @@ def proof_is_valid(
                 return False
             continue
 
+        if item.type != "OWNS":
+            return False
         valid_from = _parse_date(item.valid_from)
         valid_to = _parse_date(item.valid_to)
         if item.valid_from is not None and (valid_from is None or valid_from > as_of_date):
@@ -61,7 +67,49 @@ def proof_is_valid(
         if item.valid_to is not None and (valid_to is None or valid_to < as_of_date):
             return False
 
-    return True
+    # Any ownership attribution must share its proof with an active designation.
+    # A direct active designation is also valid on its own.
+    return has_designation
+
+
+def _pack_result_is_evaluable(pack: PackResult, pack_id: str) -> bool:
+    """Validate result policy metadata and interval/verdict consistency."""
+    try:
+        policy = get_pack(pack_id)
+    except (KeyError, TypeError):
+        return False
+
+    try:
+        interval_valid = isfinite(pack.lo) and isfinite(pack.hi)
+    except (TypeError, ValueError, OverflowError):
+        return False
+
+    if (
+        pack.version != policy.version
+        or pack.threshold != policy.threshold
+        or pack.inclusive != policy.inclusive
+        or not interval_valid
+        or pack.lo < 0
+        or pack.hi > 100
+        or pack.lo > pack.hi
+    ):
+        return False
+
+    lower_crosses = (
+        pack.lo >= policy.threshold if policy.inclusive else pack.lo > policy.threshold
+    )
+    upper_crosses = (
+        pack.hi >= policy.threshold if policy.inclusive else pack.hi > policy.threshold
+    )
+    if pack.verdict == "BLOCKED":
+        return lower_crosses
+    if pack.verdict == "NOT_BLOCKED":
+        return not upper_crosses
+    if pack.verdict == "INDETERMINATE":
+        return not lower_crosses and upper_crosses
+    if pack.verdict == "PRESUMED_CONTROLLED":
+        return not upper_crosses
+    return False
 
 
 def bounds_sentence(b: Bounds) -> str:
@@ -85,7 +133,12 @@ def authorise(
     bounds: Bounds,
     unevaluated: list[str],
 ) -> Authorisation:
-    """Apply deterministic rules; uncertainty always prevents a clear result."""
+    """Apply deterministic rules; uncertainty always prevents a clear result.
+
+    Caller contract: every supplied PackResult must describe the requested
+    entity and canonical entity. Since this interface has no target argument,
+    a mixed identity set is treated as unevaluated in full.
+    """
     pack_order = _ordered_unique(bounds.rulepacks)
     requested = set(pack_order)
     available = {
@@ -96,16 +149,24 @@ def authorise(
 
     unevaluated_set = set(unevaluated)
     unevaluated_set.update(requested - available.keys())
+    identities = {(pack.entity_id, pack.canon) for pack in packs.values()}
+    if len(identities) > 1:
+        unevaluated_set.update(requested)
     unevaluated_set.update(
         pack_id
         for pack_id, pack in available.items()
-        if pack.as_of != bounds.as_of or pack.max_hops != bounds.max_hops
+        if (
+            pack.as_of != bounds.as_of
+            or pack.max_hops != bounds.max_hops
+            or not _pack_result_is_evaluable(pack, pack_id)
+        )
     )
     unevaluated_order = [pack_id for pack_id in pack_order if pack_id in unevaluated_set]
     unevaluated_order.extend(sorted(unevaluated_set - requested))
 
     exposed: list[Reason] = []
     escalate: list[Reason] = []
+    valid_blocked: dict[str, bool] = {}
 
     if not pack_order:
         escalate.append(
@@ -115,12 +176,14 @@ def authorise(
             )
         )
 
+    # Valid BLOCKED packs form the exposed prefix, ordered by requested packs.
     for pack_id in pack_order:
         pack = available.get(pack_id)
         if pack is None or pack_id in unevaluated_set:
             continue
         if pack.verdict == "BLOCKED":
-            if proof_is_valid(pack, evidence, bounds.as_of):
+            valid_blocked[pack_id] = proof_is_valid(pack, evidence, bounds.as_of)
+            if valid_blocked[pack_id]:
                 exposed.append(
                     Reason(
                         code=f"blocked:{pack_id}",
@@ -128,18 +191,35 @@ def authorise(
                         evidence_keys=list(pack.proof),
                     )
                 )
-            else:
-                escalate.append(
-                    Reason(
-                        code=f"proof_invalid:{pack_id}",
-                        detail=(
-                            f"{pack_id} reported BLOCKED, but its proof is missing, "
-                            "unsourced, stale, or incomplete."
-                        ),
-                        evidence_keys=list(pack.proof),
-                    )
-                )
-        elif pack.verdict == "INDETERMINATE":
+
+    # Preserve the ordered rule table's escalation categories, then pack order.
+    for pack_id in pack_order:
+        pack = available.get(pack_id)
+        if (
+            pack is None
+            or pack_id in unevaluated_set
+            or pack.verdict != "BLOCKED"
+            or valid_blocked.get(pack_id, False)
+        ):
+            continue
+        escalate.append(
+            Reason(
+                code=f"proof_invalid:{pack_id}",
+                detail=(
+                    f"{pack_id} reported BLOCKED, but its proof is missing, "
+                    "unsourced, stale, or incomplete."
+                ),
+                evidence_keys=list(pack.proof),
+            )
+        )
+
+    for pack_id in pack_order:
+        pack = available.get(pack_id)
+        if (
+            pack is not None
+            and pack_id not in unevaluated_set
+            and pack.verdict == "INDETERMINATE"
+        ):
             escalate.append(
                 Reason(
                     code=f"indeterminate:{pack_id}",
@@ -147,7 +227,14 @@ def authorise(
                     evidence_keys=list(pack.decisive),
                 )
             )
-        elif pack.verdict == "PRESUMED_CONTROLLED":
+
+    for pack_id in pack_order:
+        pack = available.get(pack_id)
+        if (
+            pack is not None
+            and pack_id not in unevaluated_set
+            and pack.verdict == "PRESUMED_CONTROLLED"
+        ):
             # Control presumptions are contextual escalation signals; they do
             # not change the ownership arithmetic used by a rule pack.
             escalate.append(
