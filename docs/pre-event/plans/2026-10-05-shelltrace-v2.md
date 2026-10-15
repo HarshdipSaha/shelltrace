@@ -1870,7 +1870,7 @@ RECALL = """MATCH (c:Case) WHERE c.canon IN $canons AND c.status = 'done' AND ($
 
   - Every tool returns a Pydantic model, which becomes the call's `structuredContent`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 import json, pytest
@@ -1914,9 +1914,9 @@ async def test_no_credentials_in_outputs(client, golden_ws):
     assert "password" not in blob and "falkordb_" not in blob
 ```
 
-- [ ] **Step 2: Run them to verify they fail** → FAIL
+- [x] **Step 2: Run them to verify they fail** → FAIL (expected ModuleNotFoundError)
 
-- [ ] **Step 3: Implement `mcp_server.py`.** It is shown in full because the annotations, bounds, descriptions and order are all spec decisions.
+- [x] **Step 3: Implement `mcp_server.py`.** It is shown in full because the annotations, bounds, descriptions and order are all spec decisions.
 
 ```python
 from __future__ import annotations
@@ -2026,8 +2026,12 @@ def build_mcp(store: GraphStore) -> FastMCP:
     return mcp
 ```
 
-- [ ] **Step 4: Run the tests** → `pytest tests/test_mcp.py -v` → all PASS
-- [ ] **Step 5: Commit** → `git commit -m "feat: narrow read-only MCP server with bounded, annotated graph tools"`
+**Execution and error boundary:** Each registered tool is an async wrapper around its blocking graph/Redis body. The body runs through a bounded eight-worker executor, and `store.s.tool_timeout_s` is an end-to-end deadline that includes waiting for a worker slot. A timed-out request does not release its slot until its worker actually exits. One boundary covers workspace lookup, graph access, and Pydantic output construction: curated `ToolError` and `EntityNotFound` messages are retained, while unexpected exceptions become the fixed safe message `tool execution failed; retry or narrow the request`.
+
+**Review regressions:** `test_graph_failures_are_sanitized` injects credential-shaped backend error text and checks that it is not returned. `test_tool_timeout_is_end_to_end_and_keeps_slow_worker_slot` checks event-loop responsiveness, queue-inclusive timeout behavior, and that a timed-out worker continues to occupy its slot. `test_slot_acquired_at_deadline_releases_without_submitting` advances a deterministic fake clock to the deadline while granting a slot, then verifies the executor is not called and the slot is released.
+
+- [x] **Step 4: Run the tests** → `python -m pytest -q tests/test_mcp.py`: 17 passed; `ST_REQUIRE_DB=1 python -m pytest -q`: 245 passed
+- [x] **Step 5: Commit** → amended locally with message `feat: narrow read-only MCP server with bounded, annotated graph tools`
 
 ---
 
