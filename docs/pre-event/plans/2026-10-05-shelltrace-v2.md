@@ -1245,9 +1245,11 @@ DATA_ERRORS = f"""
 MATCH (o:Entity)-[r:OWNS]->(x:Entity) WHERE x.canon IN $scope AND r.pct IS NOT NULL AND {VALID}
 WITH x.canon AS c, o.canon AS oc, min(r.pct) AS p WITH c, sum(p) AS s WHERE s > 100.000000001 RETURN c"""
 ECON = f"""
-MATCH p=(o:Entity)-[:OWNS*1..6]->(t:Entity {{id:$id}})
-WHERE o.canon IN $seeds AND all(r IN relationships(p) WHERE r.pct IS NOT NULL AND {VALID})
-RETURN reduce(x = 1.0, r IN relationships(p) | x * r.pct / 100.0) AS share"""
+MATCH (o:Entity)-[r:OWNS]->(x:Entity)
+WHERE o.canon IN $scope AND x.canon IN $scope AND r.pct IS NOT NULL
+  AND NOT r.k IN $exclude AND {VALID}
+RETURN o.canon AS owner, x.canon AS asset, r.pct AS pct
+LIMIT $row_limit"""
 ```
 
 Driver functions:
@@ -1305,7 +1307,7 @@ def _target_share(g, canon, blocked, pack, ctx):
 9. For BLOCKED, the proof is the closure. Resolve owners with `OWNER_OF`, walk back to the seeds, and add the seeds' designation keys.
 10. For INDETERMINATE, compute `decisive` within each seed group where the target is possible but not definite, then union those keys. For each group, do a reverse BFS from the target over accepted `OWNS` rows whose owner is in that group's possible closure, bounded by `effective_hops`; collect unknown/conflicting holdings and holdings owned by possible but non-definite entities, and recurse only through those non-definite owners. Do not compare one group's definite closure with another group's possible closure, and do not include unrelated siblings or `CONTROLS` edges. Set `decisive_kind="unknown_or_conflict"`.
 11. For BLOCKED with `counterfactuals=True`, including a direct designation, re-run `evaluate` once per proof key (at most 20) with that key added to `exclude`. Keys whose removal changes the verdict become `decisive`, with `decisive_kind="counterfactual"`.
-12. `data_errors` comes from `DATA_ERRORS`. `economic_exposure` collapses duplicate OWNS records for each canonical owner/asset holding and sums `ECON` shares over all seed canons (informational), or is `None` if there are no seeds. Bound its returned canonical holding rows at 5,000 and its path-edge expansions at 20,000; if either budget is exceeded, set exposure to `None` and emit a caveat rather than return a partial number.
+12. `data_errors` comes from `DATA_ERRORS`. `economic_exposure` fetches at most 5,000 raw matching `OWNS` records (plus one sentinel row to detect overflow), then collapses duplicates by canonical owner/asset holding using the maximum reported stake and sums paths from all seed canons (informational). It is `None` if there are no seeds. Bound path-edge expansions at 20,000; if either the raw-record or expansion budget is exceeded, or the `ECON` query fails, set exposure to `None` and emit a generic caveat rather than return a partial number.
 13. Add caveats: "proof uses accounting-consolidation percentages" whenever a proof edge has `pct_basis='accounting_consolidation'` (check through `OWNER_OF` extended with `r.pct_basis`).
 14. Record `latency_ms` and `rounds`.
 

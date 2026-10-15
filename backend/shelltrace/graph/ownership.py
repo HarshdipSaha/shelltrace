@@ -78,8 +78,7 @@ ECON = f"""
 MATCH (o:Entity)-[r:OWNS]->(x:Entity)
 WHERE o.canon IN $scope AND x.canon IN $scope AND r.pct IS NOT NULL
   AND NOT r.k IN $exclude AND {VALID}
-WITH o.canon AS owner, x.canon AS asset, max(r.pct) AS pct
-RETURN owner, asset, pct
+RETURN o.canon AS owner, x.canon AS asset, r.pct AS pct
 LIMIT $row_limit"""
 
 
@@ -323,24 +322,33 @@ def _economic_exposure(
 ) -> tuple[float | None, str | None]:
     if not seeds:
         return None, None
-    rows = ro(
-        g,
-        ECON,
-        {
-            **context,
-            "scope": scope,
-            "row_limit": ECONOMIC_EXPOSURE_HOLDING_ROW_BUDGET + 1,
-        },
-    )
+    try:
+        rows = ro(
+            g,
+            ECON,
+            {
+                **context,
+                "scope": scope,
+                "row_limit": ECONOMIC_EXPOSURE_HOLDING_ROW_BUDGET + 1,
+            },
+        )
+    except Exception:
+        return None, "Economic exposure unavailable: query failed."
     if len(rows) > ECONOMIC_EXPOSURE_HOLDING_ROW_BUDGET:
         return (
             None,
             "Economic exposure unavailable: holding row limit "
             f"({ECONOMIC_EXPOSURE_HOLDING_ROW_BUDGET}) exceeded.",
         )
-    adjacency: dict[str, list[tuple[str, float]]] = defaultdict(list)
+    holding_pct: dict[tuple[str, str], float] = {}
     for row in rows:
-        adjacency[row["owner"]].append((row["asset"], float(row["pct"]) / 100.0))
+        pair = (row["owner"], row["asset"])
+        holding_pct[pair] = max(
+            holding_pct.get(pair, float("-inf")), float(row["pct"])
+        )
+    adjacency: dict[str, list[tuple[str, float]]] = defaultdict(list)
+    for (owner, asset), pct in holding_pct.items():
+        adjacency[owner].append((asset, pct / 100.0))
 
     exposure = 0.0
     path_expansions = 0

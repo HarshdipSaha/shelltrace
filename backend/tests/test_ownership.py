@@ -160,22 +160,49 @@ def test_economic_exposure_omits_branching_graph_over_path_work_budget(monkeypat
     assert caveat == "Economic exposure unavailable: path expansion limit (5) exceeded."
 
 
-def test_economic_exposure_omits_when_holding_rows_exceed_budget(monkeypatch):
-    rows = [
-        {"owner": "seed", "asset": f"asset_{index}", "pct": 100.0}
-        for index in range(3)
-    ]
-    monkeypatch.setattr(ownership, "ro", lambda *_args, **_kwargs: rows)
+def test_economic_exposure_caps_raw_duplicate_records_before_deduplication(
+    monkeypatch, store
+):
+    workspace = f"t_econ_{uuid4().hex[:8]}"
     monkeypatch.setattr(
         ownership, "ECONOMIC_EXPOSURE_HOLDING_ROW_BUDGET", 2, raising=False
     )
 
-    exposure, caveat = ownership._economic_exposure(
-        object(), "target", ["seed", "asset_0", "asset_1", "asset_2"], ["seed"], {}, 6
-    )
+    def seed(graph):
+        rw(
+            graph,
+            "CREATE (:Entity {id:'seed', canon:'seed'}), "
+            "(:Entity {id:'target', canon:'target'})",
+        )
+        rw(
+            graph,
+            "MATCH (o:Entity {id:'seed'}), (x:Entity {id:'target'}) "
+            "UNWIND $rows AS row CREATE (o)-[:OWNS {k:row.k, pct:row.pct}]->(x)",
+            {
+                "rows": [
+                    {"k": f"duplicate_{index}", "pct": 25.0 * index}
+                    for index in range(1, 4)
+                ]
+            },
+        )
 
-    assert exposure is None
-    assert caveat == "Economic exposure unavailable: holding row limit (2) exceeded."
+    try:
+        store.provision(workspace, seeder=seed, force_seed=True)
+        exposure, caveat = ownership._economic_exposure(
+            store.workspace(workspace),
+            "target",
+            ["seed", "target"],
+            ["seed"],
+            {"as_of": "2024-01-01", "exclude": [], "ignore_time": False},
+            6,
+        )
+
+        assert exposure is None
+        assert caveat == (
+            "Economic exposure unavailable: holding row limit (2) exceeded."
+        )
+    finally:
+        store.drop(workspace)
 
 
 def test_evaluation_explains_when_economic_exposure_is_omitted(monkeypatch, store, golden_ws):
@@ -185,6 +212,25 @@ def test_evaluation_explains_when_economic_exposure_is_omitted(monkeypatch, stor
 
     assert result.economic_exposure is None
     assert "Economic exposure unavailable: holding row limit (0) exceeded." in result.caveats
+
+
+def test_evaluation_keeps_verdict_when_economic_exposure_query_fails(
+    monkeypatch, store, golden_ws
+):
+    real_ro = ownership.ro
+
+    def fail_economic_query(graph, cypher, params=None):
+        if cypher == ownership.ECON:
+            raise TimeoutError("backend timeout details must not escape")
+        return real_ro(graph, cypher, params)
+
+    monkeypatch.setattr(ownership, "ro", fail_economic_query)
+
+    result = evaluate(store.workspace(golden_ws), "c_nordharbor", "2024-01-01", OFAC)
+
+    assert result.verdict == "BLOCKED"
+    assert result.economic_exposure is None
+    assert "Economic exposure unavailable: query failed." in result.caveats
 
 
 def test_direct_designation_counterfactual_marks_its_designation(store, golden_ws):
