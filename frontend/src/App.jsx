@@ -41,6 +41,16 @@ function App() {
 
   const updateForm = useCallback((updates) => {
     setForm((current) => ({ ...current, ...updates }));
+    setResult(null);
+    setSelected(null);
+    setError('');
+  }, []);
+
+  const selectEntity = useCallback((nextEntity) => {
+    setEntity(nextEntity);
+    setResult(null);
+    setSelected(null);
+    setError('');
   }, []);
 
   const runCase = useCallback(async (overrides = {}) => {
@@ -53,6 +63,7 @@ function App() {
 
     setForm(nextForm);
     setEntity(nextEntity);
+    setResult(null);
     setLoading(true);
     setError('');
     setSelected(null);
@@ -130,7 +141,7 @@ function App() {
             packs={form.packs}
             mode={form.mode}
             loading={loading}
-            onSelectEntity={setEntity}
+            onSelectEntity={selectEntity}
             onChange={updateForm}
             onRun={() => runCase()}
           />

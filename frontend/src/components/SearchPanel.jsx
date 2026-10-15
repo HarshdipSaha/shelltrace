@@ -21,35 +21,46 @@ function SearchPanel({
   const [open, setOpen] = useState(false);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState('');
+  const selectedId = entity?.id;
+  const selectedName = entity?.name;
 
   useEffect(() => {
+    let active = true;
     const term = query.trim();
-    if (term.length < 2 || (entity && term === entity.name)) {
+    setSearching(false);
+    if (term.length < 2 || (selectedName && term === selectedName)) {
       setHits([]);
       setOpen(false);
-      setSearching(false);
       setSearchError('');
-      return undefined;
+      return () => { active = false; };
     }
 
-    setSearching(true);
     const timer = window.setTimeout(() => {
+      if (!active) return;
+      setSearching(true);
       searchEntities(workspace, term, 8)
         .then(({ hits: found = [] }) => {
+          if (!active) return;
           setHits(found);
           setSearchError('');
           setOpen(true);
         })
         .catch((reason) => {
+          if (!active) return;
           setHits([]);
           setSearchError(reason.message || 'Search is unavailable.');
           setOpen(true);
         })
-        .finally(() => setSearching(false));
+        .finally(() => {
+          if (active) setSearching(false);
+        });
     }, 250);
 
-    return () => window.clearTimeout(timer);
-  }, [query, workspace, entity]);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [query, workspace, selectedId, selectedName]);
 
   const chooseEntity = (hit) => {
     onSelectEntity(hit);
