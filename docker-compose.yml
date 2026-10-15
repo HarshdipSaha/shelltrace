@@ -1,0 +1,16 @@
+services:
+  falkordb:
+    image: falkordb/falkordb:6.0.2@sha256:107455e862a824e45e8e9f5a7fbfdf5e00a08b14e13eae2577c72fd9e3f59ba6
+    ports:
+      - "6379:6379"
+      - "3001:3000"
+    volumes:
+      - falkordb_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  falkordb_data: {}

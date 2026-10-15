@@ -1,0 +1,26 @@
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+.pytest_cache/
+.hypothesis/
+.coverage
+htmlcov/
+
+# JavaScript
+node_modules/
+frontend/dist/
+npm-debug.log*
+
+# Local and derived data
+data/raw/
+eval/out/
