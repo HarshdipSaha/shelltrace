@@ -19,6 +19,9 @@ htmlcov/
 # JavaScript
 node_modules/
 frontend/dist/
+frontend/playwright-report/
+frontend/test-results/
+frontend/blob-report/
 npm-debug.log*
 
 # Local and derived data
