@@ -1,4 +1,5 @@
 from dataclasses import FrozenInstanceError
+from threading import Event, Lock, Thread
 from uuid import uuid4
 
 import pytest
@@ -100,3 +101,179 @@ def test_provisioned_workspaces_are_isolated(store, golden_ws):
 
 def test_workspace_list_only_returns_workspace_suffixes(store, golden_ws):
     assert golden_ws in store.workspaces()
+
+
+class _FakeRedis:
+    def __init__(self):
+        self.values = {}
+        self.lock = Lock()
+        self.graphs = {}
+        self.unsafe_copy = False
+        self.copy_calls = []
+
+    def set(self, name, value, *, nx=False, px=None):
+        with self.lock:
+            if nx and name in self.values:
+                return None
+            self.values[name] = value
+            return True
+
+    def get(self, name):
+        with self.lock:
+            return self.values.get(name)
+
+    def delete(self, name):
+        with self.lock:
+            return int(self.values.pop(name, None) is not None)
+
+    def eval(self, script, numkeys, key, token):
+        with self.lock:
+            if self.values.get(key) == token:
+                del self.values[key]
+                return 1
+            return 0
+
+    def execute_command(self, command, source, destination):
+        assert command == "GRAPH.COPY"
+        with self.lock:
+            if self.graphs.get(source) != "complete":
+                self.unsafe_copy = True
+                raise RuntimeError("template copy attempted before complete seed")
+            self.graphs[destination] = self.graphs[source]
+            self.copy_calls.append((source, destination))
+
+
+class _FakeGraph:
+    def __init__(self, name, connection):
+        self.name = name
+        self.connection = connection
+
+    def delete(self):
+        with self.connection.lock:
+            self.connection.graphs.pop(self.name, None)
+
+
+class _FakeFalkorDB:
+    def __init__(self, connection):
+        self.connection = connection
+
+    def select_graph(self, name):
+        return _FakeGraph(name, self.connection)
+
+    def list_graphs(self):
+        with self.connection.lock:
+            return list(self.connection.graphs)
+
+
+def _fake_store(monkeypatch, connection):
+    import shelltrace.db as db
+
+    monkeypatch.setattr(db, "FalkorDB", lambda **kwargs: _FakeFalkorDB(connection))
+    return db.GraphStore(Settings(template_graph="st_facts_test"))
+
+
+def test_concurrent_template_seed_never_copies_partial_graph(monkeypatch):
+    connection = _FakeRedis()
+    store = _fake_store(monkeypatch, connection)
+    template_started = Event()
+    finish_template = Event()
+    failures = []
+
+    def seeder(graph):
+        if graph.name == "st_facts_test":
+            template_started.set()
+            with connection.lock:
+                connection.graphs[graph.name] = "partial"
+            if not finish_template.wait(timeout=5):
+                raise TimeoutError("template seed was not released")
+        with connection.lock:
+            connection.graphs[graph.name] = "complete"
+
+    def provision(workspace):
+        try:
+            store.provision(workspace, seeder)
+        except Exception as exc:  # surfaced in the main test thread
+            failures.append(exc)
+
+    first = Thread(target=provision, args=("t_concurrent_a",))
+    first.start()
+    assert template_started.wait(timeout=2)
+    second = Thread(target=provision, args=("t_concurrent_b",))
+    second.start()
+    second.join(timeout=2)
+    try:
+        assert not second.is_alive(), "contending provision should seed its own graph"
+        assert connection.graphs.get("st_ws_t_concurrent_b") == "complete"
+        assert connection.copy_calls == []
+        assert not connection.unsafe_copy
+    finally:
+        finish_template.set()
+        first.join(timeout=5)
+
+    assert not first.is_alive()
+    assert failures == []
+    assert connection.copy_calls == [("st_facts_test", "st_ws_t_concurrent_a")]
+    assert not connection.unsafe_copy
+
+
+def test_failed_template_seed_is_retried_before_any_copy(monkeypatch):
+    connection = _FakeRedis()
+    store = _fake_store(monkeypatch, connection)
+    template_attempts = 0
+    ready_key = "shelltrace:graph-ready:st_facts_test"
+
+    def seeder(graph):
+        nonlocal template_attempts
+        if graph.name == "st_facts_test":
+            template_attempts += 1
+            with connection.lock:
+                connection.graphs[graph.name] = "partial"
+            if template_attempts == 1:
+                raise RuntimeError("injected seed failure")
+        with connection.lock:
+            connection.graphs[graph.name] = "complete"
+
+    with pytest.raises(RuntimeError, match="injected seed failure"):
+        store.provision("t_retry_a", seeder)
+    assert connection.get(ready_key) is None
+    assert connection.copy_calls == []
+
+    store.provision("t_retry_b", seeder)
+
+    assert template_attempts == 2
+    assert connection.get(ready_key) == "ready-v1"
+    assert connection.copy_calls == [("st_facts_test", "st_ws_t_retry_b")]
+    assert not connection.unsafe_copy
+
+
+def test_failed_workspace_seed_is_not_ready_and_is_retried(monkeypatch):
+    connection = _FakeRedis()
+    store = _fake_store(monkeypatch, connection)
+    connection.set("shelltrace:graph-lock:st_facts_test", "other-worker", nx=True, px=300_000)
+    workspace = "t_workspace_retry"
+    workspace_name = f"st_ws_{workspace}"
+    ready_key = f"shelltrace:graph-ready:{workspace_name}"
+    attempts = 0
+
+    def seeder(graph):
+        nonlocal attempts
+        if graph.name != workspace_name:
+            raise AssertionError("template seeder should remain owned by the other worker")
+        attempts += 1
+        with connection.lock:
+            connection.graphs[graph.name] = "partial"
+        if attempts == 1:
+            raise RuntimeError("injected workspace seed failure")
+        with connection.lock:
+            connection.graphs[graph.name] = "complete"
+
+    with pytest.raises(RuntimeError, match="injected workspace seed failure"):
+        store.provision(workspace, seeder)
+    assert connection.get(ready_key) is None
+
+    store.provision(workspace, seeder)
+
+    assert attempts == 2
+    assert connection.get(ready_key) == "ready-v1"
+    assert connection.graphs[workspace_name] == "complete"
+    assert connection.copy_calls == []

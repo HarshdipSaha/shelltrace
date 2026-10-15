@@ -1,7 +1,7 @@
 import pytest
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
-from shelltrace.models import CaseRequest, RulePack
+from shelltrace.models import CaseRequest, DesignationEvent, IsoDate, RulePack
 from shelltrace.rulepacks import EU, OFAC, PACKS, UK, get_pack
 
 
@@ -37,3 +37,33 @@ def test_rulepack_contract_forbids_extra_fields():
 def test_case_request_bounds_are_enforced():
     with pytest.raises(ValidationError):
         CaseRequest(entity_id="c_elm", as_of="2026-10-15", max_hops=7)
+
+
+def test_iso_date_rejects_impossible_calendar_day():
+    with pytest.raises(ValidationError):
+        TypeAdapter(IsoDate).validate_python("2026-02-31")
+
+
+def test_iso_date_accepts_real_day_and_serializes_as_string():
+    adapter = TypeAdapter(IsoDate)
+    value = adapter.validate_python("2024-02-29")
+
+    assert value == "2024-02-29"
+    assert type(value) is str
+    assert adapter.dump_json(value) == b'"2024-02-29"'
+
+
+def test_case_request_rejects_impossible_calendar_day():
+    with pytest.raises(ValidationError):
+        CaseRequest(entity_id="c_elm", as_of="2026-02-31")
+
+
+def test_designation_request_rejects_impossible_calendar_day():
+    with pytest.raises(ValidationError):
+        DesignationEvent(
+            entity_id="c_elm",
+            authority="OFAC",
+            program="fixture",
+            listed_on="2026-02-31",
+            source="synthetic fixture",
+        )

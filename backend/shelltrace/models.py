@@ -1,11 +1,21 @@
 from __future__ import annotations
 
+from datetime import date
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 
-IsoDate = Annotated[str, Field(pattern=r"^\d{4}-\d{2}-\d{2}$")]
+def _validate_calendar_date(value: str) -> str:
+    date.fromisoformat(value)
+    return value
+
+
+IsoDate = Annotated[
+    str,
+    Field(pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    AfterValidator(_validate_calendar_date),
+]
 PackId = Literal["OFAC", "EU", "UK"]
 Verdict = Literal["BLOCKED", "INDETERMINATE", "PRESUMED_CONTROLLED", "NOT_BLOCKED"]
 Disposition = Literal["EXPOSED", "ESCALATE", "CLEAR_WITHIN_BOUNDS"]
