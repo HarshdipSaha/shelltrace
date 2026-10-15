@@ -99,6 +99,7 @@ function SearchPanel({
             placeholder="Search company, LEI or IMO"
             value={query}
             autoComplete="off"
+            disabled={loading}
             aria-autocomplete="list"
             aria-controls="entity-options"
             aria-expanded={open && hits.length > 0}
@@ -148,11 +149,11 @@ function SearchPanel({
       <div className="field-row">
         <div className="field-block">
           <label htmlFor="as-of">As of</label>
-          <input id="as-of" type="date" value={asOf} onChange={(event) => onChange({ asOf: event.target.value })} />
+          <input id="as-of" type="date" value={asOf} disabled={loading} onChange={(event) => onChange({ asOf: event.target.value })} />
         </div>
         <div className="field-block">
           <label htmlFor="max-hops">Max hops</label>
-          <select id="max-hops" value={maxHops} onChange={(event) => onChange({ maxHops: Number(event.target.value) })}>
+          <select id="max-hops" value={maxHops} disabled={loading} onChange={(event) => onChange({ maxHops: Number(event.target.value) })}>
             {[1, 2, 3, 4, 5, 6].map((hops) => <option key={hops} value={hops}>{hops} {hops === 1 ? 'hop' : 'hops'}</option>)}
           </select>
         </div>
@@ -163,7 +164,7 @@ function SearchPanel({
         <div className="pack-choices">
           {PACKS.map((pack) => (
             <label className="pack-choice" key={pack}>
-              <input type="checkbox" checked={packs.includes(pack)} onChange={() => togglePack(pack)} />
+              <input type="checkbox" checked={packs.includes(pack)} disabled={loading} onChange={() => togglePack(pack)} />
               <span>{pack}</span>
             </label>
           ))}
@@ -179,7 +180,7 @@ function SearchPanel({
               name="mode"
               value="agent"
               checked={mode === 'agent'}
-              disabled={agentUnavailable}
+              disabled={agentUnavailable || loading}
               onChange={() => onChange({ mode: 'agent' })}
             />
             <span><strong>Agent</strong><small>Claude-assisted</small></span>
@@ -190,6 +191,7 @@ function SearchPanel({
               name="mode"
               value="playbook"
               checked={mode === 'playbook'}
+              disabled={loading}
               onChange={() => onChange({ mode: 'playbook' })}
             />
             <span><strong>Playbook</strong><small>Deterministic</small></span>

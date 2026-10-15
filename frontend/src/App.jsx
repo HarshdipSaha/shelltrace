@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { health, openCase } from './api.js';
 import CaseHeader from './components/CaseHeader.jsx';
 import SearchPanel from './components/SearchPanel.jsx';
@@ -20,6 +20,7 @@ function App() {
   const [error, setError] = useState('');
   const [service, setService] = useState({ loading: true, health: null, error: '' });
   const [selected, setSelected] = useState(null);
+  const caseRequestId = useRef(0);
 
   useEffect(() => {
     let active = true;
@@ -40,6 +41,8 @@ function App() {
   }, []);
 
   const updateForm = useCallback((updates) => {
+    caseRequestId.current += 1;
+    setLoading(false);
     setForm((current) => ({ ...current, ...updates }));
     setResult(null);
     setSelected(null);
@@ -47,6 +50,8 @@ function App() {
   }, []);
 
   const selectEntity = useCallback((nextEntity) => {
+    caseRequestId.current += 1;
+    setLoading(false);
     setEntity(nextEntity);
     setResult(null);
     setSelected(null);
@@ -61,6 +66,7 @@ function App() {
       return;
     }
 
+    const requestId = ++caseRequestId.current;
     setForm(nextForm);
     setEntity(nextEntity);
     setResult(null);
@@ -76,12 +82,14 @@ function App() {
         rulepacks: nextForm.packs,
         mode: nextForm.mode,
       });
-      setResult(caseResult);
+      if (caseRequestId.current === requestId) setResult(caseResult);
     } catch (reason) {
-      setResult(null);
-      setError(reason.message || 'The investigation could not be completed.');
+      if (caseRequestId.current === requestId) {
+        setResult(null);
+        setError(reason.message || 'The investigation could not be completed.');
+      }
     } finally {
-      setLoading(false);
+      if (caseRequestId.current === requestId) setLoading(false);
     }
   }, [entity, form]);
 

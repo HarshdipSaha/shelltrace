@@ -1,11 +1,26 @@
 import { test, expect } from '@playwright/test';
 
 test('hero case: EXPOSED with timeline and badges', async ({ page }) => {
+  let markCaseRequestStarted;
+  let releaseCaseRequest;
+  const caseRequestStarted = new Promise((resolve) => { markCaseRequestStarted = resolve; });
+  const caseRequestRelease = new Promise((resolve) => { releaseCaseRequest = resolve; });
+
+  await page.route('**/api/cases', async (route) => {
+    markCaseRequestStarted();
+    await caseRequestRelease;
+    await route.continue();
+  });
+
   await page.goto('/');
   await page.getByPlaceholder('Search company, LEI or IMO').fill('nord harbor');
   await page.getByRole('option', { name: /Nord Harbor Logistics/ }).click();
   await page.getByLabel('As of').fill('2024-01-01');
   await page.getByRole('button', { name: 'Run investigation' }).click();
+  await caseRequestStarted;
+  await expect(page.getByLabel('As of')).toBeDisabled();
+  await expect(page.getByPlaceholder('Search company, LEI or IMO')).toBeDisabled();
+  releaseCaseRequest();
   await expect(page.getByTestId('validated-badge')).toHaveText(/EXPOSED/);
   await expect(page.getByTestId('proposal-badge')).toBeVisible();
   await expect(page.getByTestId('timeline-step').filter({ hasText: 'case_history' }).first()).toBeVisible();
