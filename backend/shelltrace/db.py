@@ -78,6 +78,11 @@ class _GuardedGraph:
             result = attr(*args, **kwargs)
             if isinstance(result, Graph):
                 return _GuardedGraph(result, ensure_lock)
+            if getattr(result, "_graph", None) is graph:
+                # FalkorDB QueryResult retains the graph that produced it.
+                # Keep that reference behind the same lease guard so callers
+                # cannot make later graph calls through the result object.
+                result._graph = self
             return result
 
         return guarded_call

@@ -202,9 +202,15 @@ class _FakeGraph:
 
     def query(self, cypher, params=None, timeout=None):
         self.connection.query_calls.append((self.name, cypher, params, timeout))
+        return _FakeQueryResult(self)
 
     def ro_query(self, cypher, params=None, timeout=None):
         self.connection.query_calls.append((self.name, cypher, params, timeout))
+
+
+class _FakeQueryResult:
+    def __init__(self, graph):
+        self._graph = graph
 
 
 class _FakeFalkorDB:
@@ -570,7 +576,7 @@ def test_transient_template_renewal_error_recovers_before_lease_expiry(monkeypat
     assert not connection.unsafe_copy
 
 
-def test_replaced_lock_fences_next_seeder_write_and_ready_marker(monkeypatch):
+def test_replaced_lock_fences_query_result_graph_and_ready_marker(monkeypatch):
     connection = _FakeRedis()
     store = _fake_store(monkeypatch, connection)
     workspace = "t_fenced_seed"
@@ -581,9 +587,9 @@ def test_replaced_lock_fences_next_seeder_write_and_ready_marker(monkeypatch):
     def seeder(graph):
         with pytest.raises(AttributeError, match="unavailable on a guarded graph"):
             getattr(graph, "_GuardedGraph__graph")
-        graph.query("CREATE (:FirstWrite)")
+        result = graph.query("CREATE (:FirstWrite)")
         connection.set(lock_key, "replacement-token", px=300_000)
-        graph.query("CREATE (:FencedWrite)")
+        result._graph.query("CREATE (:FencedWrite)")
 
     with pytest.raises(TimeoutError, match="Lost graph lock"):
         store.provision(workspace, seeder, force_seed=True)
