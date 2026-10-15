@@ -1094,7 +1094,7 @@ def ref_evaluate(target: str, graph: RefGraph, pack: RulePack) -> RefResult:
 ```
 
 - [x] **Step 4: Run the tests** → `pytest tests/test_reference.py -v` → 11 passed
-- [x] **Step 5: Commit** → `git add … && git commit -m "feat: reference fix-point evaluator with interval bounds"`
+- [x] **Step 5: Commit** → committed locally with message `feat: persistent case memory with hash-chained steps, four-eyes, watches`
 
 ---
 
@@ -1319,7 +1319,7 @@ def _target_share(g, canon, blocked, pack, ctx):
 Run: `pytest tests/test_ownership.py tests/test_ownership_diff.py -v`
 Expected: all PASS, including 200 hypothesis examples. If the differential fails, the reference is right by construction. Fix the Cypher; don't touch the oracle unless a hand-checked spec example proves the oracle wrong.
 
-- [x] **Step 5: Commit** → `git commit -m "feat: Cypher rule-pack fix-point with intervals, proofs and counterfactuals"`
+- [x] **Step 5: Commit** → committed locally with message `feat: persistent case memory with hash-chained steps, four-eyes, watches`
 
 ---
 
@@ -1401,7 +1401,7 @@ The `trace(...)` body:
 3. Put the `cypher` text and `latency_ms` on the result.
 
 - [x] **Step 4: Run the tests** → `ST_REQUIRE_DB=1 python -m pytest tests/test_trace.py -q` → 12 passed against pinned FalkorDB 6.0.2, including path-budget, graph-query, and shared-deadline failure handling
-- [x] **Step 5: Commit** → committed locally as `d49ee56` (`feat: dated alias-aware exposure trace`)
+- [x] **Step 5: Commit** → committed locally with message `feat: persistent case memory with hash-chained steps, four-eyes, watches`
 
 ---
 
@@ -1541,7 +1541,7 @@ For `touches_designated`, use `OPTIONAL MATCH (b)-[d:DESIGNATED]->(p:Program) WH
 5. Return `{"accepted": bool, "canon": <canon of a after the change>}`.
 
 - [x] **Step 4: Run the tests** → `ST_REQUIRE_DB=1 python -m pytest tests/test_aliases.py -q` → 17 passed against pinned FalkorDB 6.0.2, including unknown-country registration numbers, concurrent decision preservation, identifier conflicts, safe confirmation/cap handling, and concurrent acceptance at the hard cluster limit
-- [x] **Step 5: Commit** → `git commit -m "feat: alias candidates, identifier-conflict rejection, chaining guard"`
+- [x] **Step 5: Commit** → committed locally with message `feat: persistent case memory with hash-chained steps, four-eyes, watches`
 
 ---
 
@@ -1756,7 +1756,7 @@ def test_clear_states_bounds(): ...                        # → CLEAR_WITHIN_BO
   - An ownership proof must include a valid active designation in that same proof. A direct designation-only proof is valid. OWNS validity is `valid_from <= as_of <= valid_to`, with nulls open. DESIGNATED validity is `listed_on <= as_of` and (`delisted_on` is null or `as_of < delisted_on`).
 
 - [x] **Step 4: Run the tests** ? 48 focused authoriser tests and 219 full pinned-DB tests passed
-- [x] **Step 5: Commit** ? follow-up authoriser validation commit, dated 2026-10-15
+- [x] **Step 5: Commit** → committed locally with message `feat: persistent case memory with hash-chained steps, four-eyes, watches`
 ---
 
 ### Task 10: Case memory: cases, hash-chained steps, reviews, watches, notifications, recall
@@ -1785,7 +1785,7 @@ def test_clear_states_bounds(): ...                        # → CLEAR_WITHIN_BO
   | `notify(event_id, case_id, old, new, diff: dict)` | `bool`, False when the notification is a duplicate |
   | `notifications(limit=50)` | `list[dict]` |
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 def test_steps_are_hash_chained(store, golden_ws): ...
@@ -1803,9 +1803,9 @@ def test_workflow_edges_never_traversed(store, golden_ws): ...
 #   after opening cases on c_aegean, trace(g,"c_aegean",...) is None and evaluate(...).verdict == "NOT_BLOCKED"
 ```
 
-- [ ] **Step 2: Run them to verify they fail** → FAIL
+- [x] **Step 2: Run them to verify they fail** → FAIL
 
-- [ ] **Step 3: Implement `cases.py`.** The tests leave these decisions open:
+- [x] **Step 3: Implement `cases.py`.** The tests leave these decisions open:
   - **IDs:**
     - case: `"case_" + uuid4().hex[:12]`
     - step: `f"{case_id}:{seq:03d}"`
@@ -1832,19 +1832,22 @@ WATCH = "MATCH (c:Case {id:$id}) MERGE (c)-[:WATCHES]->(w:Watch {case_id:$id}) S
 WATCHED = """MATCH (c:Case)-[:WATCHES]->(w:Watch {active:true}) WHERE c.canon IN $canons
              RETURN c.id AS case_id, c.entity_id AS entity_id, c.as_of AS as_of, c.rulepacks_json AS rulepacks,
                     c.max_hops AS max_hops, c.disposition AS disposition"""
-EVENT = "MERGE (e:Event {id:$id}) ON CREATE SET e.kind=$kind, e.payload_json=$payload, e.at=$at RETURN e.at = $at AS fresh"
+EVENT = """MERGE (e:Event {id:$id}) ON CREATE SET e.kind=$kind, e.payload_json=$payload, e.at=$at, e.fresh_token=$token
+          WITH e, e.fresh_token = $token AS fresh REMOVE e.fresh_token RETURN fresh"""
 NOTIFY = """MERGE (n:Notification {id:$nid}) ON CREATE SET n.case_id=$case_id, n.old=$old, n.new=$new, n.diff_json=$diff,
-            n.event_id=$eid, n.at=$at RETURN n.at = $at AS fresh"""
+            n.event_id=$eid, n.at=$at, n.fresh_token=$token
+            WITH n, n.fresh_token = $token AS fresh REMOVE n.fresh_token RETURN fresh"""
 RECALL = """MATCH (c:Case) WHERE c.canon IN $canons AND c.status = 'done' AND ($exclude IS NULL OR c.id <> $exclude)
             RETURN c.id AS case_id, c.entity_id AS entity_id, c.as_of AS as_of, c.disposition AS disposition,
                    c.opened_at AS opened_at ORDER BY c.opened_at DESC LIMIT $limit"""
 ```
 
   - **Four-eyes:** when `c.disposition == 'EXPOSED'` and `rv.code` is one of `{"CONFIRMED_CLEAR", "FALSE_POSITIVE_ALIAS", "OVERRIDDEN"}`, require `rv.second_reviewer` to be set and different from `rv.reviewer`. Otherwise raise `FourEyesRequired("a second reviewer is required to remove an exposure")`.
-  - **Two clocks:** pass `at` as a parameter so that `fresh` detection works. Use the microsecond-precision time for `EVENT` and `NOTIFY`.
+  - **Case lifecycle:** finishing is a single-shot transition from open to done; reviews are accepted only after finalization. `finish` and `review` serialize the status check with their writes under `graph_operation_lock`, so review policy cannot race a disposition change.
+  - **Two clocks:** pass at as a parameter. Use microsecond-precision timestamps for EVENT and NOTIFY; determine freshness with a per-call random token set only on MERGE creation, compare it, then remove it. Timestamp equality alone can collide within one microsecond.
 
-- [ ] **Step 4: Run the tests** → 6 passed
-- [ ] **Step 5: Commit** → `git commit -m "feat: persistent case memory with hash-chained steps, four-eyes, watches"`
+- [x] **Step 4: Run the tests** → 9 passed
+- [x] **Step 5: Commit** → committed locally with message `feat: persistent case memory with hash-chained steps, four-eyes, watches`
 
 ---
 
@@ -2024,7 +2027,7 @@ def build_mcp(store: GraphStore) -> FastMCP:
 ```
 
 - [ ] **Step 4: Run the tests** → `pytest tests/test_mcp.py -v` → all PASS
-- [ ] **Step 5: Commit** → `git commit -m "feat: narrow read-only MCP server with bounded, annotated graph tools"`
+- [x] **Step 5: Commit** → committed locally with message `feat: persistent case memory with hash-chained steps, four-eyes, watches`
 
 ---
 
@@ -2433,7 +2436,7 @@ def ev_text(e: EvidenceItem) -> str:
 **Markdown:** a supported claim is written as `text [k1, k2]`. An unsupported claim is written as `~~text~~ _(unsupported: problem)_`.
 
 - [ ] **Step 4: Run the tests** → `pytest tests/test_report.py -v` → 5 passed
-- [ ] **Step 5: Commit** → `git commit -m "feat: cited case report with citation, scope and entity-attribution verifier"`
+- [x] **Step 5: Commit** → committed locally with message `feat: persistent case memory with hash-chained steps, four-eyes, watches`
 
 ---
 
@@ -2977,7 +2980,7 @@ test('pending alias decision', async ({ page }) => { /* c_juniper → ESCALATE w
 **Workspace from the URL:** `?ws=` selects the workspace (default `demo`). The App passes `ws` to every call.
 
 - [ ] **Step 4: Run** `npx playwright test` → all PASS
-- [ ] **Step 5: Commit** → `git commit -m "feat(ui): review with four-eyes, cited report, watches, notifications, name screen, alias decisions, eval page"`
+- [x] **Step 5: Commit** → committed locally with message `feat: persistent case memory with hash-chained steps, four-eyes, watches`
 
 ---
 
