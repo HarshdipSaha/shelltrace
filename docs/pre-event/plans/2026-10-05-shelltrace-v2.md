@@ -902,7 +902,7 @@ The `load_synthetic(g) -> dict` body:
   - `ref_evaluate(target: str, graph: RefGraph, pack: RulePack) -> RefResult`
   - `crosses(v: float, pack) -> bool` and `EPS`
 
-- [ ] **Step 1: Write the failing tests.** Hand-built graphs; values from the spec and R3.
+- [x] **Step 1: Write the failing tests.** Hand-built graphs; values from the spec and R3.
 
 ```python
 from shelltrace.graph.reference import RefEdge, RefGraph, ref_evaluate
@@ -966,14 +966,14 @@ def test_sum_over_100_is_flagged():
     g = G([("a", "P", "Q", 70.0), ("b", "R", "Q", 60.0)], seeds={})
     assert ref_evaluate("Q", g, OFAC).data_errors == {"Q"}
 
-def test_uk_stake_held_through_controlled_entity_passes_in_full():
+def test_uk_stake_held_through_owned_intermediary_passes_in_full():
     g = G([("e1", "X", "A", 60.0), ("e2", "A", "B", 30.0), ("e3", "X", "B", 25.0)], seeds={"X": ("dX",)})
     assert ref_evaluate("B", g, UK).verdict == "BLOCKED"        # 30 (via A, blocked by X) + 25 direct = 55 > 50, same person
 ```
 
-- [ ] **Step 2: Run them to verify they fail** → FAIL (`ModuleNotFoundError`)
+- [x] **Step 2: Run them to verify they fail** → FAIL (`ModuleNotFoundError`)
 
-- [ ] **Step 3: Implement `reference.py`.** The algorithm is spelled out here because the tests alone don't pin its shape; Task 5 mirrors it in Cypher.
+- [x] **Step 3: Implement `reference.py`.** The algorithm is spelled out here because the tests alone don't pin its shape; Task 5 mirrors it in Cypher.
 
 ```python
 from __future__ import annotations
@@ -997,7 +997,7 @@ class RefResult:
     presumptions: frozenset[str]; data_errors: frozenset[str]
 
 def crosses(v: float, pack: RulePack) -> bool:
-    return v >= pack.threshold - EPS if pack.inclusive else v > pack.threshold + EPS
+    return v >= pack.threshold if pack.inclusive else v > pack.threshold
 
 @dataclass
 class _Pair:
@@ -1057,10 +1057,11 @@ def ref_evaluate(target: str, graph: RefGraph, pack: RulePack) -> RefResult:
         return RefResult("BLOCKED", 100.0, 100.0, frozenset(graph.seeds[target]), frozenset(), frozenset(), errors)
     seed_groups = [{s} for s in graph.seeds] if not pack.aggregate else [set(graph.seeds)]
     best = None   # (lo, definite, proof, seeds) of the seed group with the highest lower bound
-    possible: set[str] = set(); hi_t = 0.0
+    possible: set[str] = set(); hi_t = 0.0; definite_groups = []
     for grp in seed_groups or [set()]:
         d, pr = _fixpoint(grp, pairs, pack, upper=False)
         p, _ = _fixpoint(grp, pairs, pack, upper=True)
+        definite_groups.append(d)
         lo_t, _, _ = _share(target, d, pairs); _, h, _ = _share(target, p, pairs)
         possible |= p; hi_t = max(hi_t, h)
         if best is None or lo_t > best[0] or target in d: best = (lo_t, d, pr, grp)
@@ -1068,10 +1069,12 @@ def ref_evaluate(target: str, graph: RefGraph, pack: RulePack) -> RefResult:
     seeds = {s: graph.seeds[s] for s in grp}
     presumed: dict[str, str] = {}
     if pack.control_limb:
-        frontier = set(definite)
+        # Union the per-seed definite closures for control only; never combine
+        # ownership shares across UK designated persons.
+        frontier = set().union(*definite_groups)
         while True:
             add = {e.dst: e.k for e in graph.controls if e.src in frontier | presumed.keys()
-                   and e.dst not in definite and e.dst not in presumed}
+                   and e.dst not in frontier and e.dst not in presumed}
             if not add: break
             presumed.update(add)
     if target in definite:
@@ -1087,8 +1090,8 @@ def ref_evaluate(target: str, graph: RefGraph, pack: RulePack) -> RefResult:
     return RefResult("NOT_BLOCKED", lo_t, hi_t, frozenset(), frozenset(), frozenset(), errors)
 ```
 
-- [ ] **Step 4: Run the tests** → `pytest tests/test_reference.py -v` → 11 passed
-- [ ] **Step 5: Commit** → `git add … && git commit -m "feat: reference fix-point evaluator with interval bounds"`
+- [x] **Step 4: Run the tests** → `pytest tests/test_reference.py -v` → 11 passed
+- [x] **Step 5: Commit** → `git add … && git commit -m "feat: reference fix-point evaluator with interval bounds"`
 
 ---
 
@@ -1108,7 +1111,7 @@ def ref_evaluate(target: str, graph: RefGraph, pack: RulePack) -> RefResult:
   - `evaluate(g, entity_id, as_of, pack, max_hops=6, exclude=(), ignore_time=False, counterfactuals=False) -> PackResult`
   - `ROUND_CYPHER: str` (shown in the README and the UI's "Cypher used" panel)
 
-- [ ] **Step 1: Write the failing tests.** Golden expectations, a boundary-date test, and the differential property test.
+- [x] **Step 1: Write the failing tests.** Golden expectations, a boundary-date test, and the differential property test.
 
 ```python
 import pytest
@@ -1183,9 +1186,9 @@ def test_cypher_matches_reference(store, edges, seeds, target, pack):
     # DESIGNATED to prog_<pack lower> listed 2000-01-01; then compare verdict, lo, hi, set(proof), set(decisive)
 ```
 
-- [ ] **Step 2: Run them to verify they fail** → FAIL (`ModuleNotFoundError`)
+- [x] **Step 2: Run them to verify they fail** → FAIL (`ModuleNotFoundError`)
 
-- [ ] **Step 3: Implement `ownership.py`.** The Cypher below is the core of the product; it must mirror `reference.py` exactly.
+- [x] **Step 3: Implement `ownership.py`.** The Cypher below is the core of the product; it must mirror `reference.py` exactly.
 
 ```python
 from __future__ import annotations
@@ -1306,12 +1309,12 @@ def _target_share(g, canon, blocked, pack, ctx):
 13. Add caveats: "proof uses accounting-consolidation percentages" whenever a proof edge has `pct_basis='accounting_consolidation'` (check through `OWNER_OF` extended with `r.pct_basis`).
 14. Record `latency_ms` and `rounds`.
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `pytest tests/test_ownership.py tests/test_ownership_diff.py -v`
 Expected: all PASS, including 200 hypothesis examples. If the differential fails, the reference is right by construction. Fix the Cypher; don't touch the oracle unless a hand-checked spec example proves the oracle wrong.
 
-- [ ] **Step 5: Commit** → `git commit -m "feat: Cypher rule-pack fix-point with intervals, proofs and counterfactuals"`
+- [x] **Step 5: Commit** → `git commit -m "feat: Cypher rule-pack fix-point with intervals, proofs and counterfactuals"`
 
 ---
 

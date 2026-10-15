@@ -221,7 +221,7 @@ The demo runs on two graphs:
   - **EU:** inclusive ≥ 50 of proprietary rights; aggregates; control limb is a rebuttable presumption. Sources: Council Best Practices 2024 paras 63–67 and Commission FAQ 8.
 
     The OFAC-style chain arithmetic for the EU is an interpretation, and the UI says so.
-  - **UK:** strict > 50; no aggregation across different designated persons; a stake held by an entity that the designated person owns or controls passes in full to that person; control limb is "reasonable to expect" control. Sources: OFSI General Guidance 4.1 (May 2026) and the June 2026 joint OFAC–OFSI comparison.
+  - **UK:** strict > 50; no aggregation across different designated persons; a stake held by an entity that the designated person owns passes in full to that person. `CONTROLS` relationships create a separate control presumption and never feed ownership arithmetic; the control limb is "reasonable to expect" control. Sources: OFSI General Guidance 4.1 (May 2026) and the June 2026 joint OFAC–OFSI comparison.
 - **Fix-point evaluation**, per pack and as-of date:
   1. Seed the blocked set from `DESIGNATED` edges valid on the as-of date for the pack's authorities. Designations propagate through accepted `SAME_AS` clusters.
   2. Over the target's upstream ownership subgraph (≤ `max_hops`), repeatedly run one aggregate Cypher round. Each round sums valid `OWNS` stakes held by currently-blocked owners, grouped by owned entity, and returns the entities that newly cross the threshold.
