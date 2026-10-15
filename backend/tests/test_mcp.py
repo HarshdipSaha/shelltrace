@@ -100,6 +100,28 @@ async def test_all_tools_return_structured_content(client, golden_ws):
     assert evaluation.structuredContent["verdict"] == "NOT_BLOCKED"
 
 
+@connected_client
+async def test_scoped_alias_candidates_find_pending_upstream_alias(client, golden_ws):
+    result = await client.call_tool(
+        "alias_candidates",
+        {
+            "workspace": golden_ws,
+            "entity_id": "c_juniper",
+            "as_of": "2024-01-01",
+            "max_hops": 6,
+            "authorities": ["OFAC"],
+        },
+    )
+
+    assert not result.isError
+    candidates = result.structuredContent["candidates"]
+    assert any(
+        (item["a_id"], item["b_id"], item["state"], item["touches_designated"])
+        == ("c_ion_holdings", "c_ion_alias", "pending", True)
+        for item in candidates
+    )
+
+
 @pytest.mark.parametrize("bad", [
     {"max_hops": 9}, {"rulepack": "US"}, {"as_of": "24-01-01"},
     {"exclude_keys": ["k"] * 21}, {"entity_id": "x'}) DETACH DELETE n //"},
