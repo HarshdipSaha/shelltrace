@@ -109,6 +109,34 @@ def _fixpoint(
         proof.update(newly)
 
 
+def _decisive_keys(
+    target: str,
+    possible: set[str],
+    definite: set[str],
+    pairs: dict[str, dict[str, _Pair]],
+) -> frozenset[str]:
+    keys: set[str] = set()
+    visited = {target}
+    frontier = {target}
+    while frontier:
+        next_frontier: set[str] = set()
+        for asset in frontier:
+            for owner, holding in pairs.get(asset, {}).items():
+                if owner not in possible:
+                    continue
+                if (
+                    holding.pmax is None
+                    or holding.pmin != holding.pmax
+                    or owner not in definite
+                ):
+                    keys.update(holding.keys)
+                if owner not in definite and owner not in visited:
+                    next_frontier.add(owner)
+        visited.update(next_frontier)
+        frontier = next_frontier
+    return frozenset(keys)
+
+
 def _proof_closure(
     target: str,
     proof: dict[str, list[str]],
@@ -226,19 +254,7 @@ def ref_evaluate(target: str, graph: RefGraph, pack: RulePack) -> RefResult:
         for group_definite, group_possible in zip(definite_groups, possible_groups):
             if target not in group_possible or target in group_definite:
                 continue
-            undecided = (group_possible - group_definite) | {target}
-            decisive.update(
-                key
-                for asset in undecided
-                for owner, holding in pairs.get(asset, {}).items()
-                if owner in group_possible
-                and (
-                    holding.pmax is None
-                    or holding.pmin != holding.pmax
-                    or owner not in group_definite
-                )
-                for key in holding.keys
-            )
+            decisive.update(_decisive_keys(target, group_possible, group_definite, pairs))
         return RefResult(
             "INDETERMINATE",
             lower_target,

@@ -1297,15 +1297,15 @@ def _target_share(g, canon, blocked, pack, ctx):
 1. `canon = canon_of(g, entity_id)`.
 2. `scope, truncated = upstream_scope(...)`.
 3. `seeds = seeds_in_scope(...)`.
-4. If `canon in seeds`, return BLOCKED with lo=hi=100 and proof = `seeds[canon]`.
+4. If `canon in seeds`, return BLOCKED with lo=hi=100 and proof = `seeds[canon]`; still run requested counterfactual checks for those designation keys.
 5. Seed groups: `[set(seeds)]` if `pack.aggregate`, else `[{s} for s in seeds]`.
 6. For each group, run the definite fix-point (`upper=False`) and the possible fix-point (`upper=True`), then `_target_share` against each. Keep the group with the highest lower bound (or the one whose definite set contains `canon`). Accumulate the union of possible sets and the maximum upper bound.
-7. Control limb: if `pack.control_limb`, iterate `CONTROL_STEP` from the definite set plus the presumed set, with `stop` = definite set plus presumed set. Collect the keys.
+7. Control limb: if `pack.control_limb`, compute a control closure from each definite seed-group closure separately, then union presumed entities and keys. Do not combine ownership shares across UK seed groups, and do not feed `CONTROLS` into ownership arithmetic.
 8. Verdict precedence: BLOCKED, then INDETERMINATE, then PRESUMED_CONTROLLED, then NOT_BLOCKED (the same as the reference).
 9. For BLOCKED, the proof is the closure. Resolve owners with `OWNER_OF`, walk back to the seeds, and add the seeds' designation keys.
-10. For INDETERMINATE, `decisive` comes from `DECISIVE`, with `undecided = (possible − definite) ∪ {canon}` and `decisive_kind="unknown_or_conflict"`.
-11. For BLOCKED with `counterfactuals=True`, re-run `evaluate` once per proof key (at most 20) with that key added to `exclude`. Keys whose removal changes the verdict become `decisive`, with `decisive_kind="counterfactual"`.
-12. `data_errors` comes from `DATA_ERRORS`. `economic_exposure` is the sum of `ECON` shares over all seed canons (informational), or `None` if there are no seeds.
+10. For INDETERMINATE, compute `decisive` within each seed group where the target is possible but not definite, then union those keys. For each group, do a reverse BFS from the target over accepted `OWNS` rows whose owner is in that group's possible closure, bounded by `effective_hops`; collect unknown/conflicting holdings and holdings owned by possible but non-definite entities, and recurse only through those non-definite owners. Do not compare one group's definite closure with another group's possible closure, and do not include unrelated siblings or `CONTROLS` edges. Set `decisive_kind="unknown_or_conflict"`.
+11. For BLOCKED with `counterfactuals=True`, including a direct designation, re-run `evaluate` once per proof key (at most 20) with that key added to `exclude`. Keys whose removal changes the verdict become `decisive`, with `decisive_kind="counterfactual"`.
+12. `data_errors` comes from `DATA_ERRORS`. `economic_exposure` collapses duplicate OWNS records for each canonical owner/asset holding and sums `ECON` shares over all seed canons (informational), or is `None` if there are no seeds. Bound its returned canonical holding rows at 5,000 and its path-edge expansions at 20,000; if either budget is exceeded, set exposure to `None` and emit a caveat rather than return a partial number.
 13. Add caveats: "proof uses accounting-consolidation percentages" whenever a proof edge has `pct_basis='accounting_consolidation'` (check through `OWNER_OF` extended with `r.pct_basis`).
 14. Record `latency_ms` and `rounds`.
 

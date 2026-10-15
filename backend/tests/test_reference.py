@@ -173,6 +173,24 @@ def test_uk_decisive_edges_are_scoped_to_groups_where_target_is_possible():
     assert {"s2-v", "v-t"} <= result.decisive
 
 
+def test_decisive_keys_exclude_uncertain_ownership_sibling():
+    graph = G(
+        owns=[
+            ("seed-u-unknown", "S", "U", None),
+            ("u-target", "U", "T", 60.0),
+            ("seed-w-unknown", "S", "W", None),
+            ("w-sibling", "W", "Z", 60.0),
+        ],
+        controls=[("w-controls-target", "W", "T", None), ("z-controls-target", "Z", "T", None)],
+        seeds={"S": ("dS",)},
+    )
+
+    result = ref_evaluate("T", graph, UK)
+
+    assert result.verdict == "INDETERMINATE"
+    assert result.decisive == {"seed-u-unknown", "u-target"}
+
+
 def test_uk_control_presumptions_include_each_designated_seed_group():
     graph = G(
         owns=[("e1", "P", "A", 10.0)],

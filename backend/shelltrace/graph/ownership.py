@@ -8,6 +8,9 @@ from ..db import ro
 from ..models import PackResult, RulePack
 from .reference import crosses
 
+ECONOMIC_EXPOSURE_HOLDING_ROW_BUDGET = 5_000
+ECONOMIC_EXPOSURE_PATH_EXPANSION_BUDGET = 20_000
+
 
 class EntityNotFound(KeyError):
     """Raised when an entity ID is absent from the graph."""
@@ -54,11 +57,10 @@ RETURN b.canon AS c, collect(r.k) AS ks"""
 
 DECISIVE = f"""
 MATCH (o:Entity)-[r:OWNS]->(x:Entity)
-WHERE x.canon IN $undecided AND o.canon IN $possible AND r.pct_basis IN $basis
+WHERE x.canon IN $frontier AND o.canon IN $possible AND r.pct_basis IN $basis
   AND NOT r.k IN $exclude AND {VALID}
 WITH x.canon AS c, o.canon AS oc, min(r.pct) AS pmin, max(r.pct) AS pmax, collect(r.k) AS ks
-WHERE pmax IS NULL OR pmin <> pmax OR NOT oc IN $definite
-UNWIND ks AS k RETURN DISTINCT k"""
+RETURN c, oc, pmin, pmax, ks"""
 
 OWNER_OF = """
 MATCH (o:Entity)-[r:OWNS]->(:Entity)
@@ -77,7 +79,8 @@ MATCH (o:Entity)-[r:OWNS]->(x:Entity)
 WHERE o.canon IN $scope AND x.canon IN $scope AND r.pct IS NOT NULL
   AND NOT r.k IN $exclude AND {VALID}
 WITH o.canon AS owner, x.canon AS asset, max(r.pct) AS pct
-RETURN owner, asset, pct"""
+RETURN owner, asset, pct
+LIMIT $row_limit"""
 
 
 def _ctx(as_of: str, exclude: tuple[str, ...], ignore_time: bool) -> dict[str, Any]:
@@ -182,6 +185,43 @@ def _fixpoint(
     return blocked, proof, rounds
 
 
+def _decisive_keys(
+    g,
+    target: str,
+    possible: set[str],
+    definite: set[str],
+    pack: RulePack,
+    context: dict[str, Any],
+    max_hops: int,
+) -> list[str]:
+    keys: set[str] = set()
+    visited = {target}
+    frontier = {target}
+    for _ in range(max_hops):
+        rows = ro(
+            g,
+            DECISIVE,
+            {
+                **context,
+                "frontier": sorted(frontier),
+                "possible": sorted(possible),
+                "basis": list(pack.basis_accepted),
+            },
+        )
+        next_frontier: set[str] = set()
+        for row in rows:
+            owner = row["oc"]
+            if row["pmax"] is None or row["pmin"] != row["pmax"] or owner not in definite:
+                keys.update(row["ks"] or [])
+            if owner not in definite and owner not in visited:
+                next_frontier.add(owner)
+        visited.update(next_frontier)
+        frontier = next_frontier
+        if not frontier:
+            break
+    return sorted(keys)
+
+
 def _target_share(
     g,
     canon: str,
@@ -280,15 +320,30 @@ def _economic_exposure(
     seeds: list[str],
     context: dict[str, Any],
     max_hops: int,
-) -> float | None:
+) -> tuple[float | None, str | None]:
     if not seeds:
-        return None
-    rows = ro(g, ECON, {**context, "scope": scope})
+        return None, None
+    rows = ro(
+        g,
+        ECON,
+        {
+            **context,
+            "scope": scope,
+            "row_limit": ECONOMIC_EXPOSURE_HOLDING_ROW_BUDGET + 1,
+        },
+    )
+    if len(rows) > ECONOMIC_EXPOSURE_HOLDING_ROW_BUDGET:
+        return (
+            None,
+            "Economic exposure unavailable: holding row limit "
+            f"({ECONOMIC_EXPOSURE_HOLDING_ROW_BUDGET}) exceeded.",
+        )
     adjacency: dict[str, list[tuple[str, float]]] = defaultdict(list)
     for row in rows:
         adjacency[row["owner"]].append((row["asset"], float(row["pct"]) / 100.0))
 
     exposure = 0.0
+    path_expansions = 0
     for seed in seeds:
         pending = [(seed, 1.0, 0, frozenset({seed}))]
         while pending:
@@ -296,6 +351,13 @@ def _economic_exposure(
             if hops >= max_hops:
                 continue
             for asset, pct in adjacency.get(owner, ()):
+                path_expansions += 1
+                if path_expansions > ECONOMIC_EXPOSURE_PATH_EXPANSION_BUDGET:
+                    return (
+                        None,
+                        "Economic exposure unavailable: path expansion limit "
+                        f"({ECONOMIC_EXPOSURE_PATH_EXPANSION_BUDGET}) exceeded.",
+                    )
                 if asset in visited:
                     continue
                 path_share = share * pct
@@ -303,7 +365,7 @@ def _economic_exposure(
                     exposure += path_share
                 else:
                     pending.append((asset, path_share, hops + 1, visited | {asset}))
-    return exposure
+    return exposure, None
 
 
 def _result(
@@ -385,6 +447,9 @@ def evaluate(
     )
     errors = _data_errors(g, scope, context)
     all_seed_canons = sorted(seeds)
+    economic_exposure, exposure_caveat = _economic_exposure(
+        g, canon, scope, all_seed_canons, context, effective_hops
+    )
 
     if canon in seeds:
         proof = sorted(seeds[canon])
@@ -421,10 +486,8 @@ def evaluate(
             scope=scope,
             truncated=truncated,
             data_errors=errors,
-            caveats=[],
-            economic_exposure=_economic_exposure(
-                g, canon, scope, all_seed_canons, context, effective_hops
-            ),
+            caveats=[exposure_caveat] if exposure_caveat else [],
+            economic_exposure=economic_exposure,
             rounds=0,
             latency_ms=elapsed,
         )
@@ -482,18 +545,17 @@ def evaluate(
         for group_definite, group_possible in zip(definite_groups, possible_groups):
             if canon not in group_possible or canon in group_definite:
                 continue
-            rows = ro(
-                g,
-                DECISIVE,
-                {
-                    **context,
-                    "undecided": sorted((group_possible - group_definite) | {canon}),
-                    "possible": sorted(group_possible),
-                    "basis": list(pack.basis_accepted),
-                    "definite": sorted(group_definite),
-                },
+            decisive_keys.update(
+                _decisive_keys(
+                    g,
+                    canon,
+                    group_possible,
+                    group_definite,
+                    pack,
+                    context,
+                    effective_hops,
+                )
             )
-            decisive_keys.update(row["k"] for row in rows)
         proof_keys, caveats = [], []
         verdict = "INDETERMINATE"
         decisive = sorted(decisive_keys)
@@ -510,6 +572,8 @@ def evaluate(
         decisive_kind = "none"
 
     used_seeds = sorted(selected_group)
+    if exposure_caveat:
+        caveats.append(exposure_caveat)
     if verdict == "BLOCKED" and counterfactuals:
         for key in proof_keys[:20]:
             alternate = evaluate(
@@ -546,9 +610,7 @@ def evaluate(
         truncated=truncated,
         data_errors=errors,
         caveats=caveats,
-        economic_exposure=_economic_exposure(
-            g, canon, scope, all_seed_canons, context, effective_hops
-        ),
+        economic_exposure=economic_exposure,
         rounds=rounds,
         latency_ms=elapsed,
     )

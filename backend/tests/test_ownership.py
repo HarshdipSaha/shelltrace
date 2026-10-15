@@ -1,5 +1,9 @@
+from uuid import uuid4
+
 import pytest
 
+from shelltrace.db import rw
+from shelltrace.graph import ownership
 from shelltrace.graph.ownership import EntityNotFound, canon_of, evaluate, seeds_in_scope, upstream_scope
 from shelltrace.rulepacks import EU, OFAC, UK
 
@@ -125,6 +129,64 @@ def test_economic_exposure_counts_duplicate_holding_once(store, golden_ws):
     assert result.economic_exposure == 0.6
 
 
+def test_economic_exposure_omits_branching_graph_over_path_work_budget(monkeypatch):
+    layers = [["a0", "b0"]]
+    rows = [
+        {"owner": "seed", "asset": node, "pct": 100.0}
+        for node in layers[0]
+    ]
+    for layer_index in range(3):
+        next_layer = [f"a{layer_index + 1}", f"b{layer_index + 1}"]
+        rows.extend(
+            {"owner": owner, "asset": asset, "pct": 100.0}
+            for owner in layers[-1]
+            for asset in next_layer
+        )
+        layers.append(next_layer)
+    rows.extend(
+        {"owner": owner, "asset": "target", "pct": 100.0}
+        for owner in layers[-1]
+    )
+    monkeypatch.setattr(ownership, "ro", lambda *_args, **_kwargs: rows)
+    monkeypatch.setattr(
+        ownership, "ECONOMIC_EXPOSURE_PATH_EXPANSION_BUDGET", 5, raising=False
+    )
+
+    exposure, caveat = ownership._economic_exposure(
+        object(), "target", ["seed", *sum(layers, []), "target"], ["seed"], {}, 6
+    )
+
+    assert exposure is None
+    assert caveat == "Economic exposure unavailable: path expansion limit (5) exceeded."
+
+
+def test_economic_exposure_omits_when_holding_rows_exceed_budget(monkeypatch):
+    rows = [
+        {"owner": "seed", "asset": f"asset_{index}", "pct": 100.0}
+        for index in range(3)
+    ]
+    monkeypatch.setattr(ownership, "ro", lambda *_args, **_kwargs: rows)
+    monkeypatch.setattr(
+        ownership, "ECONOMIC_EXPOSURE_HOLDING_ROW_BUDGET", 2, raising=False
+    )
+
+    exposure, caveat = ownership._economic_exposure(
+        object(), "target", ["seed", "asset_0", "asset_1", "asset_2"], ["seed"], {}, 6
+    )
+
+    assert exposure is None
+    assert caveat == "Economic exposure unavailable: holding row limit (2) exceeded."
+
+
+def test_evaluation_explains_when_economic_exposure_is_omitted(monkeypatch, store, golden_ws):
+    monkeypatch.setattr(ownership, "ECONOMIC_EXPOSURE_HOLDING_ROW_BUDGET", 0)
+
+    result = evaluate(store.workspace(golden_ws), "c_nimbus", "2024-01-01", OFAC)
+
+    assert result.economic_exposure is None
+    assert "Economic exposure unavailable: holding row limit (0) exceeded." in result.caveats
+
+
 def test_direct_designation_counterfactual_marks_its_designation(store, golden_ws):
     result = evaluate(
         store.workspace(golden_ws),
@@ -138,6 +200,57 @@ def test_direct_designation_counterfactual_marks_its_designation(store, golden_w
     assert result.proof == ["syn:D-p_volkov-prog_ofac"]
     assert result.decisive == ["syn:D-p_volkov-prog_ofac"]
     assert result.decisive_kind == "counterfactual"
+
+
+def test_decisive_keys_exclude_seed_reachable_uncertain_sibling(store):
+    workspace = f"t_dec_{uuid4().hex[:8]}"
+
+    def seed(graph):
+        rw(
+            graph,
+            "UNWIND $rows AS row CREATE (:Entity {id:row.id, canon:row.id})",
+            {"rows": [{"id": node} for node in ("S", "U", "T", "W", "Z")]},
+        )
+        rw(graph, "CREATE (:Program {id:'prog_uk', authority:'UK'})")
+        rw(
+            graph,
+            "MATCH (e:Entity {id:'S'}), (p:Program {id:'prog_uk'}) "
+            "CREATE (e)-[:DESIGNATED {k:'dS', listed_on:'2000-01-01'}]->(p)",
+        )
+        rw(
+            graph,
+            "UNWIND $rows AS row MATCH (o:Entity {id:row.owner}), "
+            "(x:Entity {id:row.asset}) "
+            "CREATE (o)-[:OWNS {k:row.key, pct:row.pct, pct_basis:'synthetic'}]->(x)",
+            {
+                "rows": [
+                    {"key": "seed-u-unknown", "owner": "S", "asset": "U", "pct": None},
+                    {"key": "u-target", "owner": "U", "asset": "T", "pct": 60.0},
+                    {"key": "seed-w-unknown", "owner": "S", "asset": "W", "pct": None},
+                    {"key": "w-sibling", "owner": "W", "asset": "Z", "pct": 60.0},
+                ]
+            },
+        )
+        rw(
+            graph,
+            "UNWIND $rows AS row MATCH (o:Entity {id:row.owner}), "
+            "(x:Entity {id:row.asset}) "
+            "CREATE (o)-[:CONTROLS {k:row.key, basis:'board_majority'}]->(x)",
+            {
+                "rows": [
+                    {"key": "w-controls-target", "owner": "W", "asset": "T"},
+                    {"key": "z-controls-target", "owner": "Z", "asset": "T"},
+                ]
+            },
+        )
+
+    try:
+        store.provision(workspace, seeder=seed, force_seed=True)
+        result = evaluate(store.workspace(workspace), "T", "2024-01-01", UK)
+        assert result.verdict == "INDETERMINATE"
+        assert set(result.decisive) == {"u-target", "seed-u-unknown"}
+    finally:
+        store.drop(workspace)
 
 
 def test_hop_bound_limits_the_upstream_scope(store, golden_ws):
