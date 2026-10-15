@@ -221,7 +221,7 @@ The demo runs on two graphs:
   - **EU:** inclusive ≥ 50 of proprietary rights; aggregates; control limb is a rebuttable presumption. Sources: Council Best Practices 2024 paras 63–67 and Commission FAQ 8.
 
     The OFAC-style chain arithmetic for the EU is an interpretation, and the UI says so.
-  - **UK:** strict > 50; no aggregation across different designated persons; a stake held by an entity that the designated person owns or controls passes in full to that person; control limb is "reasonable to expect" control. Sources: OFSI General Guidance 4.1 (May 2026) and the June 2026 joint OFAC–OFSI comparison.
+  - **UK:** strict > 50; no aggregation across different designated persons; a stake held by an entity that the designated person owns passes in full to that person. `CONTROLS` relationships create a separate control presumption and never feed ownership arithmetic; the control limb is "reasonable to expect" control. Sources: OFSI General Guidance 4.1 (May 2026) and the June 2026 joint OFAC–OFSI comparison.
 - **Fix-point evaluation**, per pack and as-of date:
   1. Seed the blocked set from `DESIGNATED` edges valid on the as-of date for the pack's authorities. Designations propagate through accepted `SAME_AS` clusters.
   2. Over the target's upstream ownership subgraph (≤ `max_hops`), repeatedly run one aggregate Cypher round. Each round sums valid `OWNS` stakes held by currently-blocked owners, grouped by owned entity, and returns the entities that newly cross the threshold.
@@ -232,11 +232,11 @@ The demo runs on two graphs:
 - **Interval arithmetic:**
   - **Lower bound:** sums known stakes from *definitely* blocked owners.
   - **Upper bound:** adds the residual (100 − all known stakes into that entity) whenever a *possibly* blocked owner holds an unknown stake.
-  - **Verdict:** the target is `BLOCKED` when lower ≥ threshold, `NOT_BLOCKED` when upper < threshold, otherwise `INDETERMINATE`, with the unknown-stake edges listed as decisive.
+  - **Verdict:** the target is `BLOCKED` when lower ≥ threshold, `NOT_BLOCKED` when upper < threshold, otherwise `INDETERMINATE`. Decisive unknown or conflicting stakes are limited to accepted `OWNS` dependencies on the target's reverse ownership slice: start at the target, follow possible blocked owners back up for at most `max_hops`, and include dependencies only from seed groups where the target is possible but not definite. Unrelated uncertain siblings and `CONTROLS` edges are excluded.
   - Possibly blocked owners are computed by the same fix-point using upper bounds.
   - Known stakes summing over 100 into one entity are flagged as a data error, and the raw values are kept.
 - **Control limb (EU and UK only):** a valid `CONTROLS` edge from a blocked entity creates `PRESUMED_CONTROLLED`. The presumption propagates downward only, and never feeds ownership arithmetic.
-- **Multiplied-down economic exposure** (the product of stakes along paths) is displayed as an informational metric with a "not the legal test" label. It never decides anything.
+- **Multiplied-down economic exposure** (the product of stakes along paths) is displayed as an informational metric with a "not the legal test" label. It never decides anything. Limit raw matching `OWNS` records to 5,000 (using one extra row only to detect overflow) and path-edge expansions to 20,000; if either budget is exceeded or the metric query fails, show it as unavailable with a generic caveat instead of displaying a partial total. Deduplicate canonical owner/asset holdings and take the maximum reported stake only after the bounded raw rows are returned.
 
 ### Other graph computations
 - **Dated exposure trace:** a bounded variable-length match over `OWNS|CONTROLS|SAME_AS`, plus `OFFICER_OF|REGISTERED_AT` for *context mode only*. The validity predicate is applied inside `all(relationships(p))`, terminating on an entity with a valid designation. `shortestPath` and `allShortestPaths` are not used, because their post-filtering yields false CLEARs ([R2](research/R2-falkordb-platform.md)).

@@ -902,7 +902,7 @@ The `load_synthetic(g) -> dict` body:
   - `ref_evaluate(target: str, graph: RefGraph, pack: RulePack) -> RefResult`
   - `crosses(v: float, pack) -> bool` and `EPS`
 
-- [ ] **Step 1: Write the failing tests.** Hand-built graphs; values from the spec and R3.
+- [x] **Step 1: Write the failing tests.** Hand-built graphs; values from the spec and R3.
 
 ```python
 from shelltrace.graph.reference import RefEdge, RefGraph, ref_evaluate
@@ -966,14 +966,14 @@ def test_sum_over_100_is_flagged():
     g = G([("a", "P", "Q", 70.0), ("b", "R", "Q", 60.0)], seeds={})
     assert ref_evaluate("Q", g, OFAC).data_errors == {"Q"}
 
-def test_uk_stake_held_through_controlled_entity_passes_in_full():
+def test_uk_stake_held_through_owned_intermediary_passes_in_full():
     g = G([("e1", "X", "A", 60.0), ("e2", "A", "B", 30.0), ("e3", "X", "B", 25.0)], seeds={"X": ("dX",)})
     assert ref_evaluate("B", g, UK).verdict == "BLOCKED"        # 30 (via A, blocked by X) + 25 direct = 55 > 50, same person
 ```
 
-- [ ] **Step 2: Run them to verify they fail** → FAIL (`ModuleNotFoundError`)
+- [x] **Step 2: Run them to verify they fail** → FAIL (`ModuleNotFoundError`)
 
-- [ ] **Step 3: Implement `reference.py`.** The algorithm is spelled out here because the tests alone don't pin its shape; Task 5 mirrors it in Cypher.
+- [x] **Step 3: Implement `reference.py`.** The algorithm is spelled out here because the tests alone don't pin its shape; Task 5 mirrors it in Cypher.
 
 ```python
 from __future__ import annotations
@@ -997,7 +997,7 @@ class RefResult:
     presumptions: frozenset[str]; data_errors: frozenset[str]
 
 def crosses(v: float, pack: RulePack) -> bool:
-    return v >= pack.threshold - EPS if pack.inclusive else v > pack.threshold + EPS
+    return v >= pack.threshold if pack.inclusive else v > pack.threshold
 
 @dataclass
 class _Pair:
@@ -1057,10 +1057,11 @@ def ref_evaluate(target: str, graph: RefGraph, pack: RulePack) -> RefResult:
         return RefResult("BLOCKED", 100.0, 100.0, frozenset(graph.seeds[target]), frozenset(), frozenset(), errors)
     seed_groups = [{s} for s in graph.seeds] if not pack.aggregate else [set(graph.seeds)]
     best = None   # (lo, definite, proof, seeds) of the seed group with the highest lower bound
-    possible: set[str] = set(); hi_t = 0.0
+    possible: set[str] = set(); hi_t = 0.0; definite_groups = []
     for grp in seed_groups or [set()]:
         d, pr = _fixpoint(grp, pairs, pack, upper=False)
         p, _ = _fixpoint(grp, pairs, pack, upper=True)
+        definite_groups.append(d)
         lo_t, _, _ = _share(target, d, pairs); _, h, _ = _share(target, p, pairs)
         possible |= p; hi_t = max(hi_t, h)
         if best is None or lo_t > best[0] or target in d: best = (lo_t, d, pr, grp)
@@ -1068,10 +1069,12 @@ def ref_evaluate(target: str, graph: RefGraph, pack: RulePack) -> RefResult:
     seeds = {s: graph.seeds[s] for s in grp}
     presumed: dict[str, str] = {}
     if pack.control_limb:
-        frontier = set(definite)
+        # Union the per-seed definite closures for control only; never combine
+        # ownership shares across UK designated persons.
+        frontier = set().union(*definite_groups)
         while True:
             add = {e.dst: e.k for e in graph.controls if e.src in frontier | presumed.keys()
-                   and e.dst not in definite and e.dst not in presumed}
+                   and e.dst not in frontier and e.dst not in presumed}
             if not add: break
             presumed.update(add)
     if target in definite:
@@ -1087,8 +1090,8 @@ def ref_evaluate(target: str, graph: RefGraph, pack: RulePack) -> RefResult:
     return RefResult("NOT_BLOCKED", lo_t, hi_t, frozenset(), frozenset(), frozenset(), errors)
 ```
 
-- [ ] **Step 4: Run the tests** → `pytest tests/test_reference.py -v` → 11 passed
-- [ ] **Step 5: Commit** → `git add … && git commit -m "feat: reference fix-point evaluator with interval bounds"`
+- [x] **Step 4: Run the tests** → `pytest tests/test_reference.py -v` → 11 passed
+- [x] **Step 5: Commit** → `git add … && git commit -m "feat: reference fix-point evaluator with interval bounds"`
 
 ---
 
@@ -1108,7 +1111,7 @@ def ref_evaluate(target: str, graph: RefGraph, pack: RulePack) -> RefResult:
   - `evaluate(g, entity_id, as_of, pack, max_hops=6, exclude=(), ignore_time=False, counterfactuals=False) -> PackResult`
   - `ROUND_CYPHER: str` (shown in the README and the UI's "Cypher used" panel)
 
-- [ ] **Step 1: Write the failing tests.** Golden expectations, a boundary-date test, and the differential property test.
+- [x] **Step 1: Write the failing tests.** Golden expectations, a boundary-date test, and the differential property test.
 
 ```python
 import pytest
@@ -1183,9 +1186,9 @@ def test_cypher_matches_reference(store, edges, seeds, target, pack):
     # DESIGNATED to prog_<pack lower> listed 2000-01-01; then compare verdict, lo, hi, set(proof), set(decisive)
 ```
 
-- [ ] **Step 2: Run them to verify they fail** → FAIL (`ModuleNotFoundError`)
+- [x] **Step 2: Run them to verify they fail** → FAIL (`ModuleNotFoundError`)
 
-- [ ] **Step 3: Implement `ownership.py`.** The Cypher below is the core of the product; it must mirror `reference.py` exactly.
+- [x] **Step 3: Implement `ownership.py`.** The Cypher below is the core of the product; it must mirror `reference.py` exactly.
 
 ```python
 from __future__ import annotations
@@ -1242,9 +1245,11 @@ DATA_ERRORS = f"""
 MATCH (o:Entity)-[r:OWNS]->(x:Entity) WHERE x.canon IN $scope AND r.pct IS NOT NULL AND {VALID}
 WITH x.canon AS c, o.canon AS oc, min(r.pct) AS p WITH c, sum(p) AS s WHERE s > 100.000000001 RETURN c"""
 ECON = f"""
-MATCH p=(o:Entity)-[:OWNS*1..6]->(t:Entity {{id:$id}})
-WHERE o.canon IN $seeds AND all(r IN relationships(p) WHERE r.pct IS NOT NULL AND {VALID})
-RETURN reduce(x = 1.0, r IN relationships(p) | x * r.pct / 100.0) AS share"""
+MATCH (o:Entity)-[r:OWNS]->(x:Entity)
+WHERE o.canon IN $scope AND x.canon IN $scope AND r.pct IS NOT NULL
+  AND NOT r.k IN $exclude AND {VALID}
+RETURN o.canon AS owner, x.canon AS asset, r.pct AS pct
+LIMIT $row_limit"""
 ```
 
 Driver functions:
@@ -1294,24 +1299,24 @@ def _target_share(g, canon, blocked, pack, ctx):
 1. `canon = canon_of(g, entity_id)`.
 2. `scope, truncated = upstream_scope(...)`.
 3. `seeds = seeds_in_scope(...)`.
-4. If `canon in seeds`, return BLOCKED with lo=hi=100 and proof = `seeds[canon]`.
+4. If `canon in seeds`, return BLOCKED with lo=hi=100 and proof = `seeds[canon]`; still run requested counterfactual checks for those designation keys.
 5. Seed groups: `[set(seeds)]` if `pack.aggregate`, else `[{s} for s in seeds]`.
 6. For each group, run the definite fix-point (`upper=False`) and the possible fix-point (`upper=True`), then `_target_share` against each. Keep the group with the highest lower bound (or the one whose definite set contains `canon`). Accumulate the union of possible sets and the maximum upper bound.
-7. Control limb: if `pack.control_limb`, iterate `CONTROL_STEP` from the definite set plus the presumed set, with `stop` = definite set plus presumed set. Collect the keys.
+7. Control limb: if `pack.control_limb`, compute a control closure from each definite seed-group closure separately, then union presumed entities and keys. Do not combine ownership shares across UK seed groups, and do not feed `CONTROLS` into ownership arithmetic.
 8. Verdict precedence: BLOCKED, then INDETERMINATE, then PRESUMED_CONTROLLED, then NOT_BLOCKED (the same as the reference).
 9. For BLOCKED, the proof is the closure. Resolve owners with `OWNER_OF`, walk back to the seeds, and add the seeds' designation keys.
-10. For INDETERMINATE, `decisive` comes from `DECISIVE`, with `undecided = (possible − definite) ∪ {canon}` and `decisive_kind="unknown_or_conflict"`.
-11. For BLOCKED with `counterfactuals=True`, re-run `evaluate` once per proof key (at most 20) with that key added to `exclude`. Keys whose removal changes the verdict become `decisive`, with `decisive_kind="counterfactual"`.
-12. `data_errors` comes from `DATA_ERRORS`. `economic_exposure` is the sum of `ECON` shares over all seed canons (informational), or `None` if there are no seeds.
+10. For INDETERMINATE, compute `decisive` within each seed group where the target is possible but not definite, then union those keys. For each group, do a reverse BFS from the target over accepted `OWNS` rows whose owner is in that group's possible closure, bounded by `effective_hops`; collect unknown/conflicting holdings and holdings owned by possible but non-definite entities, and recurse only through those non-definite owners. Do not compare one group's definite closure with another group's possible closure, and do not include unrelated siblings or `CONTROLS` edges. Set `decisive_kind="unknown_or_conflict"`.
+11. For BLOCKED with `counterfactuals=True`, including a direct designation, re-run `evaluate` once per proof key (at most 20) with that key added to `exclude`. Keys whose removal changes the verdict become `decisive`, with `decisive_kind="counterfactual"`.
+12. `data_errors` comes from `DATA_ERRORS`. `economic_exposure` fetches at most 5,000 raw matching `OWNS` records (plus one sentinel row to detect overflow), then collapses duplicates by canonical owner/asset holding using the maximum reported stake and sums paths from all seed canons (informational). It is `None` if there are no seeds. Bound path-edge expansions at 20,000; if either the raw-record or expansion budget is exceeded, or the `ECON` query fails, set exposure to `None` and emit a generic caveat rather than return a partial number.
 13. Add caveats: "proof uses accounting-consolidation percentages" whenever a proof edge has `pct_basis='accounting_consolidation'` (check through `OWNER_OF` extended with `r.pct_basis`).
 14. Record `latency_ms` and `rounds`.
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `pytest tests/test_ownership.py tests/test_ownership_diff.py -v`
 Expected: all PASS, including 200 hypothesis examples. If the differential fails, the reference is right by construction. Fix the Cypher; don't touch the oracle unless a hand-checked spec example proves the oracle wrong.
 
-- [ ] **Step 5: Commit** → `git commit -m "feat: Cypher rule-pack fix-point with intervals, proofs and counterfactuals"`
+- [x] **Step 5: Commit** → `git commit -m "feat: Cypher rule-pack fix-point with intervals, proofs and counterfactuals"`
 
 ---
 
