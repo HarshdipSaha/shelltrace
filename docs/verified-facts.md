@@ -13,7 +13,7 @@ The initial local `latest` image was older, so the exact 6.0.2 image was pulled 
 The verifier ran against the throwaway `st_verify` graph, cleaned it and its copy after the checks, and printed:
 
 ```text
-DEFERRED V1_ro_query_rejects_write: verify against Task 1's production GraphStore helper after Tasks 1-3; a verifier-local guard would not test the application's read-only boundary.
+PASS V1_ro_query_rejects_write
 PASS V2_wcc
 PASS V3_fulltext: CREATE FULLTEXT INDEX DDL fallback; legacy procedure rejected: Received 2 arguments to procedure 'db.idx.fulltext.createNodeIndex', expected at most 1
 PASS V4_graph_copy
@@ -25,12 +25,12 @@ PASS V9_mcp_sdk_imports
 SERVER redis_version=8.10.2
 FALKORDB version=6.0.2
 GRAPH.CONFIG GET *: [['TIMEOUT', 1000], ['TIMEOUT_DEFAULT', 0], ['TIMEOUT_MAX', 0], ['CACHE_SIZE', 25], ['ASYNC_DELETE', 1], ['OMP_THREAD_COUNT', 12], ['THREAD_COUNT', 12], ['INDEX_WORKER_THREADS', 0], ['RESULTSET_SIZE', 10000], ['VKEY_MAX_ENTITY_COUNT', 100000], ['MAX_QUEUED_QUERIES', 25], ['QUERY_MEM_CAPACITY', 0], ['DELTA_MAX_PENDING_CHANGES', 10000], ['NODE_CREATION_BUFFER', 16384], ['CMD_INFO', 1], ['MAX_INFO_QUERIES', 1000], ['EFFECTS_COMPRESSION', 0], ['EFFECTS_THRESHOLD', 300], ['BOLT_PORT', 65535], ['DELAY_INDEXING', 0], ['IMPORT_FOLDER', '/var/lib/FalkorDB/import/'], ['TEMP_FOLDER', '/tmp'], ['JS_HEAP_SIZE', 268435456], ['JS_STACK_SIZE', 1048576]]
-RESULT PASS (0 failures; 1 deferred)
+RESULT PASS (0 failures; 0 deferred)
 ```
 
 ## Follow-up requirements
 
-- **V1 is deferred:** Task 1 must verify write rejection against the actual `GraphStore.ro_query` helper. The verifier does not substitute a local guard for that test.
+- **V1 passed:** `scripts/verify_falkordb.py` imported Task 1's production `shelltrace.db.ro` helper, attempted a write through it, confirmed FalkorDB rejected the write, and confirmed no probe node was created. `backend/tests/test_db.py` repeats this against the seeded workspace.
 - **V3 uses DDL on FalkorDB 6.0.2:** `CALL db.idx.fulltext.createNodeIndex('N','name')` is rejected by this server. `CREATE FULLTEXT INDEX FOR (n:N) ON (n.name)` plus `db.idx.fulltext.queryNodes` works. Later schema setup should use the DDL form on the pinned image; `CONTAINS` remains the fallback if full-text search is unavailable.
 - **MCP uses v1 APIs:** the backend requirement is `mcp>=1.12,<2`. The local dependency install resolved `mcp 1.18.0`, and V9 passed with that version. MCP 2.x removed the `mcp.server.fastmcp` surface that Task 11 uses.
 - **V2, V4-V9 passed:** the WCC procedure, graph copy, null collection/list parameter behavior, cycle query, relationship index, two-label MERGE, and required MCP SDK surface are available on the pinned image/dependencies.
