@@ -45,7 +45,7 @@ class PackResult(Strict):
     version: str
     entity_id: str
     canon: str
-    as_of: str
+    as_of: IsoDate
     max_hops: int
     verdict: Verdict
     lo: float
@@ -82,8 +82,8 @@ class TraceEdge(Strict):
     pct: float | None = None
     basis: str | None = None
     role: str | None = None
-    valid_from: str | None = None
-    valid_to: str | None = None
+    valid_from: IsoDate | None = None
+    valid_to: IsoDate | None = None
     src: str | None = None
     src_record: str | None = None
 
@@ -95,7 +95,7 @@ class TraceResult(Strict):
     designation_key: str
     authority: str
     program: str
-    listed_on: str
+    listed_on: IsoDate
     mode: Literal["ownership", "context"]
     cypher: str
     latency_ms: int
@@ -130,10 +130,10 @@ class EvidenceItem(Strict):
     pct: float | None = None
     basis: str | None = None
     role: str | None = None
-    valid_from: str | None = None
-    valid_to: str | None = None
-    listed_on: str | None = None
-    delisted_on: str | None = None
+    valid_from: IsoDate | None = None
+    valid_to: IsoDate | None = None
+    listed_on: IsoDate | None = None
+    delisted_on: IsoDate | None = None
     src: str | None = None
     src_record: str | None = None
     snapshot: str | None = None
@@ -146,13 +146,13 @@ class Stake(Strict):
     owner_name: str
     pct: float | None
     basis: str | None
-    valid_from: str | None
-    valid_to: str | None
+    valid_from: IsoDate | None
+    valid_to: IsoDate | None
     k: str
 
 
 class Bounds(Strict):
-    as_of: str
+    as_of: IsoDate
     max_hops: int
     rel_scope: list[str]
     rulepacks: list[str]
@@ -215,7 +215,7 @@ class CaseRequest(Strict):
 class PriorCase(Strict):
     case_id: str
     entity_id: str
-    as_of: str
+    as_of: IsoDate
     disposition: str | None
     opened_at: str
 
@@ -224,7 +224,7 @@ class CaseResult(Strict):
     case_id: str
     workspace: str
     entity: TraceNode
-    as_of: str
+    as_of: IsoDate
     max_hops: int
     rulepacks: list[PackId]
     mode: str
