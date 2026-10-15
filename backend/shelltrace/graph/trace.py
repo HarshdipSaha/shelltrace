@@ -15,6 +15,7 @@ OWN_RELS = "OWNS|CONTROLS|SAME_AS"
 CTX_RELS = "OWNS|CONTROLS|SAME_AS|OFFICER_OF|REGISTERED_AT"
 TRACE_PATH_CANDIDATE_BUDGET = 1_000
 TRACE_TOOL_BUDGET_FRACTION = 0.8
+TRACE_WRAPPER_BUDGET_FRACTION = 0.9
 
 
 class TraceUnavailable(RuntimeError):
@@ -26,7 +27,7 @@ def _trace_deadlines() -> tuple[float, float]:
     started = monotonic()
     return (
         started + settings.tool_timeout_s * TRACE_TOOL_BUDGET_FRACTION,
-        started + settings.tool_timeout_s,
+        started + settings.tool_timeout_s * TRACE_WRAPPER_BUDGET_FRACTION,
     )
 
 
@@ -176,6 +177,7 @@ def _trace(
             entity_id,
             timeout_ms=_remaining_timeout_ms(deadline),
             **_remaining_socket_timeouts(wrapper_deadline),
+            wall_deadline=wrapper_deadline,
         )
         _check_deadline(deadline)
     except EntityNotFound:
@@ -199,6 +201,7 @@ def _trace(
             {**params, "path_limit": remaining + 1},
             timeout_ms=_remaining_timeout_ms(deadline),
             **_remaining_socket_timeouts(wrapper_deadline),
+            wall_deadline=wrapper_deadline,
         )
         _check_deadline(deadline)
     except Exception as exc:
@@ -243,6 +246,7 @@ def _trace(
                 {**params, "path_limit": remaining + 1},
                 timeout_ms=_remaining_timeout_ms(deadline),
                 **_remaining_socket_timeouts(wrapper_deadline),
+                wall_deadline=wrapper_deadline,
             )
             _check_deadline(deadline)
         except Exception as exc:

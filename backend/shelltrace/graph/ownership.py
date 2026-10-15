@@ -93,6 +93,7 @@ def canon_of(
     timeout_ms: int | None = None,
     socket_timeout_s: float | None = None,
     socket_connect_timeout_s: float | None = None,
+    wall_deadline: float | None = None,
 ) -> str:
     query = "MATCH (e:Entity {id:$id}) RETURN e.canon AS c"
     params = {"id": entity_id}
@@ -102,6 +103,7 @@ def canon_of(
             "timeout_ms": timeout_ms,
             "socket_timeout_s": socket_timeout_s,
             "socket_connect_timeout_s": socket_connect_timeout_s,
+            "wall_deadline": wall_deadline,
         }.items()
         if value is not None
     }

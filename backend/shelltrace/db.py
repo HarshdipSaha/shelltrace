@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import time
 from contextlib import contextmanager
-from threading import Event, Thread
+from threading import BoundedSemaphore, Event, Lock, Thread
 from typing import Any, Callable
 from uuid import uuid4
 
@@ -14,6 +14,7 @@ from .config import Settings
 
 _WS = re.compile(r"^[a-z0-9_]{1,32}$")
 _TIMEOUT_MS = 2000
+_RO_READ_SLOTS = BoundedSemaphore(16)
 _LOCK_TTL_MS = 300_000
 _LOCK_WAIT_SECONDS = 30
 _READY_VALUE = "ready-v1"
@@ -49,17 +50,79 @@ class WorkspaceNameError(ValueError):
     """Raised when a workspace suffix cannot safely form a graph name."""
 
 
+class _ReadDispatchGate:
+    """Coordinate query-send claims with cancellation without locking over I/O."""
+
+    __slots__ = ("_cancel_event", "_deadline", "_lock", "_cancelled", "_in_flight")
+
+    def __init__(
+        self,
+        cancel_event: Event | None = None,
+        deadline: float | None = None,
+    ):
+        self._cancel_event = cancel_event or Event()
+        self._deadline = deadline
+        self._lock = Lock()
+        self._cancelled = False
+        self._in_flight = 0
+
+    def is_cancelled(self) -> bool:
+        return (
+            self._cancelled
+            or self._cancel_event.is_set()
+            or (
+                self._deadline is not None
+                and time.monotonic() >= self._deadline
+            )
+        )
+
+    def cancel(self) -> None:
+        # Publish cancellation first so a sender that has not claimed dispatch
+        # cannot pass the gate. Never wait here: the lock protects only the
+        # short claim/state update, never the socket send itself.
+        self._cancel_event.set()
+        if self._lock.acquire(blocking=False):
+            try:
+                self._cancelled = True
+            finally:
+                self._lock.release()
+
+    def dispatch(self, send: Callable[[], Any]) -> Any:
+        with self._lock:
+            if self.is_cancelled():
+                raise TimeoutError("graph read was cancelled before command send")
+            # This claim is recorded before releasing the lock. A concurrent
+            # timeout can then treat this send as already in flight and
+            # disconnect its pool best-effort.
+            self._in_flight += 1
+        try:
+            return send()
+        finally:
+            with self._lock:
+                self._in_flight -= 1
+
+
 class _GuardedGraph:
     """Forward graph calls only while the caller still owns its Redis lease."""
 
-    __slots__ = ("__graph", "__ensure_lock")
+    __slots__ = ("__graph", "__ensure_lock", "__guard_client")
 
-    def __init__(self, graph: Graph, ensure_lock: Callable[[], None]):
+    def __init__(
+        self,
+        graph: Graph,
+        ensure_lock: Callable[..., None],
+        guard_client: Any | None = None,
+    ):
         object.__setattr__(self, "_GuardedGraph__graph", graph)
         object.__setattr__(self, "_GuardedGraph__ensure_lock", ensure_lock)
+        object.__setattr__(self, "_GuardedGraph__guard_client", guard_client)
 
     def __getattribute__(self, name: str):
-        if name in {"_GuardedGraph__graph", "_GuardedGraph__ensure_lock"}:
+        if name in {
+            "_GuardedGraph__graph",
+            "_GuardedGraph__ensure_lock",
+            "_GuardedGraph__guard_client",
+        }:
             raise AttributeError(f"{name} is unavailable on a guarded graph")
         return object.__getattribute__(self, name)
 
@@ -69,15 +132,19 @@ class _GuardedGraph:
 
         graph = object.__getattribute__(self, "_GuardedGraph__graph")
         ensure_lock = object.__getattribute__(self, "_GuardedGraph__ensure_lock")
+        guard_client = object.__getattribute__(self, "_GuardedGraph__guard_client")
         attr = getattr(graph, name)
         if not callable(attr):
             return attr
 
         def guarded_call(*args, **kwargs):
-            ensure_lock()
+            if guard_client is None:
+                ensure_lock()
+            else:
+                ensure_lock(guard_client)
             result = attr(*args, **kwargs)
             if isinstance(result, Graph):
-                return _GuardedGraph(result, ensure_lock)
+                return _GuardedGraph(result, ensure_lock, guard_client)
             if getattr(result, "_graph", None) is graph:
                 # FalkorDB QueryResult retains the graph that produced it.
                 # Keep that reference behind the same lease guard so callers
@@ -104,6 +171,7 @@ def ro(
     timeout_ms: int | None = None,
     socket_timeout_s: float | None = None,
     socket_connect_timeout_s: float | None = None,
+    wall_deadline: float | None = None,
 ) -> list[dict]:
     """Run a query through FalkorDB's server-enforced read-only API."""
     timeout = (
@@ -111,14 +179,96 @@ def ro(
         if timeout_ms is None
         else max(1, min(_TIMEOUT_MS, int(timeout_ms)))
     )
-    if socket_timeout_s is None and socket_connect_timeout_s is None:
+    if (
+        socket_timeout_s is None
+        and socket_connect_timeout_s is None
+        and wall_deadline is None
+    ):
         return rows(g.ro_query(cypher, params or {}, timeout=timeout))
+    dispatch_gate = (
+        _ReadDispatchGate(deadline=wall_deadline)
+        if wall_deadline is not None
+        else None
+    )
     with graph_with_socket_timeout(
         g,
         socket_timeout_s=socket_timeout_s,
         socket_connect_timeout_s=socket_connect_timeout_s,
+        dispatch_gate=dispatch_gate,
     ) as bounded_graph:
-        return rows(bounded_graph.ro_query(cypher, params or {}, timeout=timeout))
+        if wall_deadline is None:
+            return rows(bounded_graph.ro_query(cypher, params or {}, timeout=timeout))
+        return _ro_until_deadline(
+            bounded_graph,
+            cypher,
+            params or {},
+            timeout,
+            wall_deadline,
+            dispatch_gate,
+        )
+
+
+def _ro_until_deadline(
+    g: Graph,
+    cypher: str,
+    params: dict,
+    query_timeout_ms: int,
+    wall_deadline: float,
+    dispatch_gate: _ReadDispatchGate | None,
+) -> list[dict]:
+    remaining_s = wall_deadline - time.monotonic()
+    if remaining_s <= 0:
+        raise TimeoutError("graph read exceeded its wall-clock deadline")
+    if not _RO_READ_SLOTS.acquire(timeout=remaining_s):
+        raise TimeoutError("graph read could not start before its wall-clock deadline")
+    completed = Event()
+    outcome: dict[str, Any] = {}
+
+    def read() -> None:
+        try:
+            outcome["rows"] = rows(
+                g.ro_query(cypher, params, timeout=query_timeout_ms)
+            )
+        except BaseException as exc:
+            outcome["error"] = exc
+        finally:
+            completed.set()
+            _RO_READ_SLOTS.release()
+
+    worker = Thread(target=read, daemon=True)
+    try:
+        worker.start()
+    except BaseException:
+        _RO_READ_SLOTS.release()
+        raise
+    remaining_s = wall_deadline - time.monotonic()
+    if remaining_s <= 0 or not completed.wait(remaining_s):
+        if dispatch_gate is not None:
+            dispatch_gate.cancel()
+        try:
+            graph = _unwrapped_graph(g)
+            client = graph.client
+            redis_client = getattr(client, "connection", client)
+            redis_client.connection_pool.disconnect()
+        except Exception:
+            pass
+        raise TimeoutError("graph read exceeded its wall-clock deadline")
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome["rows"]
+
+
+def _unwrapped_graph(g: Graph) -> Graph:
+    """Return the graph behind an internal lease guard for bounded I/O setup."""
+    if isinstance(g, _GuardedGraph):
+        return object.__getattribute__(g, "_GuardedGraph__graph")
+    return g
+
+
+def _graph_guard(g: Graph) -> Callable[[], None] | None:
+    if isinstance(g, _GuardedGraph):
+        return object.__getattribute__(g, "_GuardedGraph__ensure_lock")
+    return None
 
 
 def rw(g: Graph, cypher: str, params: dict | None = None) -> list[dict]:
@@ -132,16 +282,23 @@ def graph_with_socket_timeout(
     *,
     socket_timeout_s: float | None,
     socket_connect_timeout_s: float | None,
+    dispatch_gate: _ReadDispatchGate | None = None,
+    cancellation_event: Event | None = None,
 ):
     """Use a temporary client with bounded transport waits for a read operation."""
+    raw_graph = _unwrapped_graph(g)
+    ensure_lock = _graph_guard(g)
+    if dispatch_gate is None and cancellation_event is not None:
+        # Keep the cancellation-event hook usable by focused transport tests.
+        dispatch_gate = _ReadDispatchGate(cancellation_event)
     try:
-        client = g.client
+        client = raw_graph.client
         redis_client = getattr(client, "connection", client)
         pool = redis_client.connection_pool
         pool_kwargs = dict(pool.connection_kwargs)
     except AttributeError:
-        # Lightweight graph doubles and guarded graph proxies may not expose a
-        # Redis client. Their query methods still enforce the server timeout.
+        # Lightweight graph doubles may not expose a Redis client. Their query
+        # methods still enforce the server timeout.
         yield g
         return
 
@@ -150,12 +307,35 @@ def graph_with_socket_timeout(
     if socket_connect_timeout_s is not None:
         pool_kwargs["socket_connect_timeout"] = socket_connect_timeout_s
     try:
+        connection_class = pool.connection_class
+        if dispatch_gate is not None:
+            class DeadlineConnection(connection_class):
+                def connect(self):
+                    if dispatch_gate.is_cancelled():
+                        raise TimeoutError("graph read was cancelled before connection")
+                    super().connect()
+                    if dispatch_gate.is_cancelled():
+                        self.disconnect()
+                        raise TimeoutError("graph read was cancelled during connection")
+
+                def send_packed_command(self, *args, **kwargs):
+                    return dispatch_gate.dispatch(
+                        lambda: super(DeadlineConnection, self).send_packed_command(
+                            *args, **kwargs
+                        )
+                    )
+
+            connection_class = DeadlineConnection
         bounded_pool = type(pool)(
-            connection_class=pool.connection_class,
+            connection_class=connection_class,
             **pool_kwargs,
         )
         bounded_client = type(redis_client)(connection_pool=bounded_pool)
-        bounded_graph = type(g)(bounded_client, g.name)
+        bounded_graph = type(raw_graph)(bounded_client, raw_graph.name)
+        if ensure_lock is not None:
+            bounded_graph = _GuardedGraph(
+                bounded_graph, ensure_lock, guard_client=bounded_client
+            )
     except Exception as exc:
         raise RuntimeError("could not create a graph client with bounded socket waits") from exc
 
@@ -313,9 +493,13 @@ class GraphStore:
             daemon=True,
         )
         heartbeat.start()
+
+        def ensure_lock(connection=None) -> None:
+            self._assert_lock_owned(key, token, lost, connection)
+
         try:
-            self._assert_lock_owned(key, token, lost)
-            yield lambda: self._assert_lock_owned(key, token, lost)
+            ensure_lock()
+            yield ensure_lock
         finally:
             stop.set()
             heartbeat.join()
@@ -346,10 +530,13 @@ class GraphStore:
                     return
                 break
 
-    def _assert_lock_owned(self, key: str, token: str, lost: Event) -> None:
+    def _assert_lock_owned(
+        self, key: str, token: str, lost: Event, connection=None
+    ) -> None:
         if lost.is_set():
             raise TimeoutError(f"Lost graph lock: {key}")
-        owner = self._db.connection.get(key)
+        lock_client = self._db.connection if connection is None else connection
+        owner = lock_client.get(key)
         if isinstance(owner, bytes):
             owner = owner.decode("ascii", errors="ignore")
         if owner != token:
@@ -401,10 +588,11 @@ def graph_operation_lock(g: Graph):
     stop = Event()
     lost = Event()
 
-    def ensure_lock() -> None:
+    def ensure_lock(read_client=None) -> None:
         if lost.is_set():
             raise TimeoutError(f"Lost graph lock: {lock_key}")
-        owner = connection.get(lock_key)
+        lock_client = connection if read_client is None else read_client
+        owner = lock_client.get(lock_key)
         if isinstance(owner, bytes):
             owner = owner.decode("ascii", errors="ignore")
         if owner != token:

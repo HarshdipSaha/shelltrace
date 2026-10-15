@@ -161,8 +161,10 @@ def test_trace_stops_before_exceeding_tool_deadline(monkeypatch):
         timeout_ms=None,
         socket_timeout_s=None,
         socket_connect_timeout_s=None,
+        wall_deadline=None,
     ):
         assert timeout_ms is not None and timeout_ms <= 1600
+        assert wall_deadline == 1.8
         socket_timeouts.append((socket_timeout_s, socket_connect_timeout_s))
 
     def slow_zero_hop(
@@ -173,8 +175,10 @@ def test_trace_stops_before_exceeding_tool_deadline(monkeypatch):
         timeout_ms=None,
         socket_timeout_s=None,
         socket_connect_timeout_s=None,
+        wall_deadline=None,
     ):
         query_timeouts.append(timeout_ms)
+        assert wall_deadline == 1.8
         socket_timeouts.append((socket_timeout_s, socket_connect_timeout_s))
         clock["now"] = 1.7
         return []
@@ -186,4 +190,4 @@ def test_trace_stops_before_exceeding_tool_deadline(monkeypatch):
         trace(object(), "target", "2024-01-01", 6, ALL)
 
     assert query_timeouts == [1600]
-    assert socket_timeouts == [(1.9, 0.1), (1.9, 0.1)]
+    assert socket_timeouts == [(1.7, 0.1), (1.7, 0.1)]
