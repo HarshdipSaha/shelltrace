@@ -1558,7 +1558,7 @@ For `touches_designated`, use `OPTIONAL MATCH (b)-[d:DESIGNATED]->(p:Program) WH
   - `ownership_stakes(g, entity_id, as_of) -> list[Stake]`
   - `neighborhood(g, entity_id, depth=1, limit=50) -> dict` (`{"nodes": [...], "edges": [...]}`)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 from shelltrace.graph.redflags import red_flags
@@ -1602,15 +1602,16 @@ def test_search_finds_alias_spellings(store, golden_ws):
     assert get_entity(g, "v_kestrel_star").kind == "Vessel"
 ```
 
-- [ ] **Step 2: Run them to verify they fail** → FAIL
+- [x] **Step 2: Run them to verify they fail** → FAIL
 
-- [ ] **Step 3: Implement `redflags.py`.** Each check runs on `scope, _ = upstream_scope(g, canon_of(g, entity_id), as_of, max_hops)`. If the cycle pattern failed V6, use the fallback: Python Tarjan SCC over the scope's valid `OWNS` edges, flagging components of size 2 or more. Deduplicate flags by `(kind, tuple(sorted(evidence_keys)))`.
+- [x] **Step 3: Implement `redflags.py`.** Each check runs on `scope, _ = upstream_scope(g, canon_of(g, entity_id), as_of, max_hops)`. If the cycle pattern failed V6, use the fallback: Python Tarjan SCC over the scope's valid `OWNS` edges, flagging components of size 2 or more. Deduplicate flags by `(kind, tuple(sorted(evidence_keys)))`.
 
 ```python
 DIVEST = """
 MATCH (o:Entity)-[r:OWNS]->(x:Entity), (o)-[d:DESIGNATED]->(pg:Program)
 WHERE x.canon IN $scope AND pg.authority IN $auth AND r.valid_to IS NOT NULL AND r.pct IS NOT NULL
   AND r.pct >= 50.0 AND r.valid_to < d.listed_on AND d.listed_on <= $as_of
+  AND (d.delisted_on IS NULL OR d.delisted_on > $as_of)
 RETURN o.id AS owner, x.id AS asset, r.k AS k, r.pct AS pct, r.valid_to AS ended, d.listed_on AS listed, d.k AS dk"""
 # Python keeps rows with (date(listed) - date(ended)).days <= window_days:
 #   RedFlag("divestment_near_listing", [owner, asset], [k, dk], f"{pct:g}% stake ended {ended}, {days} days before listing {listed}")
@@ -1622,8 +1623,10 @@ WHERE x.canon IN $scope AND all(r IN relationships(p) WHERE (r.valid_from IS NUL
 RETURN [n IN nodes(p) | n.id] AS ids, [r IN relationships(p) | r.k] AS ks LIMIT 3"""
 
 MASS = """
-MATCH (x:Entity)-[r:REGISTERED_AT]->(a:Address) WHERE x.canon IN $scope AND (r.valid_to IS NULL OR r.valid_to >= $as_of)
-MATCH (o:Entity)-[r2:REGISTERED_AT]->(a) WHERE (r2.valid_to IS NULL OR r2.valid_to >= $as_of)
+MATCH (x:Entity)-[r:REGISTERED_AT]->(a:Address) WHERE x.canon IN $scope
+  AND (r.valid_from IS NULL OR r.valid_from <= $as_of) AND (r.valid_to IS NULL OR r.valid_to >= $as_of)
+MATCH (o:Entity)-[r2:REGISTERED_AT]->(a)
+WHERE (r2.valid_from IS NULL OR r2.valid_from <= $as_of) AND (r2.valid_to IS NULL OR r2.valid_to >= $as_of)
 WITH a, collect(DISTINCT r.k) AS ks, count(DISTINCT o) AS n WHERE n >= $mass_min
 RETURN a.id AS address, a.name AS address_name, n, ks"""
 
@@ -1635,7 +1638,7 @@ WHERE x.canon IN $scope AND pg.authority IN $auth AND d.listed_on <= $as_of
 RETURN o.id AS controller, x.id AS controlled, type(c) AS t, c.k AS k, d.k AS dk"""
 ```
 
-- [ ] **Step 4: Implement `evidence.py`.** The queries:
+- [x] **Step 4: Implement `evidence.py`.** The queries:
 
 ```python
 EVIDENCE = """
@@ -1651,10 +1654,14 @@ RETURN o.id AS owner_id, o.name AS owner_name, r.pct AS pct, r.pct_basis AS basi
        r.valid_from AS valid_from, r.valid_to AS valid_to, r.k AS k ORDER BY coalesce(r.pct, -1.0) DESC"""
 SEARCH_FT = """
 CALL db.idx.fulltext.queryNodes('Entity', $q) YIELD node, score
-OPTIONAL MATCH (node)-[d:DESIGNATED]->(:Program)
 RETURN node.id AS id, node.name AS name, node.kind AS kind, node.country AS country, node.lei AS lei, node.imo AS imo,
-       count(d) > 0 AS designated, max(score) AS score ORDER BY score DESC LIMIT $limit"""
+       score ORDER BY score DESC LIMIT $limit"""
+SEARCH_DESIGNATED = """
+MATCH (e:Entity)-[:DESIGNATED]->(:Program) WHERE e.id IN $ids
+RETURN DISTINCT e.id AS id"""
 ```
+
+**Pinned FalkorDB correction:** On FalkorDB 6.0.2, combining `db.idx.fulltext.queryNodes` with a following `OPTIONAL MATCH` and aggregation panics the server. Keep the full-text query projection-only, then fetch designated entity IDs in a separate query.
 
 `entity_search` details:
 - **Query:** `" ".join(t + "*" for t in norm(query).split())`, for prefix matching.
@@ -1666,8 +1673,8 @@ RETURN node.id AS id, node.name AS name, node.kind AS kind, node.country AS coun
 - capped at `limit` nodes;
 - each edge marked `expired: true` when `valid_to < today`.
 
-- [ ] **Step 5: Run the tests** → `pytest tests/test_redflags.py tests/test_evidence.py -v` → all PASS
-- [ ] **Step 6: Commit** → `git commit -m "feat: red-flag typologies, evidence lookup, stakes, search"`
+- [x] **Step 5: Run the tests** → `pytest tests/test_redflags.py tests/test_evidence.py -v` → all PASS
+- [x] **Step 6: Commit** → `git commit -m "feat: red-flag typologies, evidence lookup, stakes, search"`
 
 ---
 
