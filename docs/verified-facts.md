@@ -32,6 +32,7 @@ RESULT PASS (0 failures; 1 deferred)
 
 - **V1 is deferred:** Task 1 must verify write rejection against the actual `GraphStore.ro_query` helper. The verifier does not substitute a local guard for that test.
 - **V3 uses DDL on FalkorDB 6.0.2:** `CALL db.idx.fulltext.createNodeIndex('N','name')` is rejected by this server. `CREATE FULLTEXT INDEX FOR (n:N) ON (n.name)` plus `db.idx.fulltext.queryNodes` works. Later schema setup should use the DDL form on the pinned image; `CONTAINS` remains the fallback if full-text search is unavailable.
+- **MCP uses v1 APIs:** the backend requirement is `mcp>=1.12,<2`. The local dependency install resolved `mcp 1.18.0`, and V9 passed with that version. MCP 2.x removed the `mcp.server.fastmcp` surface that Task 11 uses.
 - **V2, V4-V9 passed:** the WCC procedure, graph copy, null collection/list parameter behavior, cycle query, relationship index, two-label MERGE, and required MCP SDK surface are available on the pinned image/dependencies.
 
 The requested `pip install -e ".[dev]"` succeeded in the shared Python installation. Pip also reported pre-existing dependency conflicts involving unrelated globally installed packages; CI installs the project in a clean runner.
