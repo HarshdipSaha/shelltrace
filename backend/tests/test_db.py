@@ -112,6 +112,8 @@ class _FakeRedis:
         self.graphs = {}
         self.unsafe_copy = False
         self.copy_calls = []
+        self.query_calls = []
+        self.renewal_failures = {}
 
     def _expire_locked(self, name):
         expires_at = self.expirations.get(name)
@@ -148,6 +150,9 @@ class _FakeRedis:
             if "pexpire" in script_lower:
                 key, token, ttl_ms = keys_and_args
                 self._expire_locked(key)
+                if self.renewal_failures.get(key, 0):
+                    self.renewal_failures[key] -= 1
+                    raise ConnectionError("injected transient renewal error")
                 if self.values.get(key) == token:
                     self.expirations[key] = monotonic() + int(ttl_ms) / 1000
                     return 1
@@ -190,6 +195,12 @@ class _FakeGraph:
     def delete(self):
         with self.connection.lock:
             self.connection.graphs.pop(self.name, None)
+
+    def query(self, cypher, params=None, timeout=None):
+        self.connection.query_calls.append((self.name, cypher, params, timeout))
+
+    def ro_query(self, cypher, params=None, timeout=None):
+        self.connection.query_calls.append((self.name, cypher, params, timeout))
 
 
 class _FakeFalkorDB:
@@ -491,3 +502,78 @@ def test_workspace_lock_renews_beyond_original_ttl(monkeypatch):
     assert second_failures == []
     assert not second_seed_entered.is_set()
     assert connection.graphs[graph_name] == "complete"
+
+
+def test_transient_template_renewal_error_recovers_before_lease_expiry(monkeypatch):
+    import shelltrace.db as db
+
+    monkeypatch.setattr(db, "_LOCK_TTL_MS", 100)
+    connection = _FakeRedis()
+    connection.renewal_failures["shelltrace:graph-lock:st_facts_test"] = 1
+    store = _fake_store(monkeypatch, connection)
+    template_started = Event()
+    finish_template = Event()
+    template_attempts = 0
+    failures = []
+
+    def seeder(graph):
+        nonlocal template_attempts
+        if graph.name == "st_facts_test":
+            template_attempts += 1
+            with connection.lock:
+                connection.graphs[graph.name] = "partial"
+            template_started.set()
+            if not finish_template.wait(timeout=5):
+                raise TimeoutError("template seed was not released")
+        with connection.lock:
+            connection.graphs[graph.name] = "complete"
+
+    def provision(workspace):
+        try:
+            store.provision(workspace, seeder)
+        except Exception as exc:
+            failures.append(exc)
+
+    first = Thread(target=provision, args=("t_renew_retry_a",))
+    first.start()
+    assert template_started.wait(timeout=2)
+    Event().wait(0.3)  # longer than the initial 100 ms lease
+    second = Thread(target=provision, args=("t_renew_retry_b",))
+    second.start()
+    second.join(timeout=2)
+    try:
+        assert not second.is_alive(), "a transient renewal error should not strand the worker"
+        assert template_attempts == 1
+        assert connection.graphs.get("st_ws_t_renew_retry_b") == "complete"
+        assert connection.copy_calls == []
+    finally:
+        finish_template.set()
+        first.join(timeout=5)
+        second.join(timeout=5)
+
+    assert not first.is_alive()
+    assert failures == []
+    assert template_attempts == 1
+    assert connection.copy_calls == [("st_facts_test", "st_ws_t_renew_retry_a")]
+    assert not connection.unsafe_copy
+
+
+def test_replaced_lock_fences_next_seeder_write_and_ready_marker(monkeypatch):
+    connection = _FakeRedis()
+    store = _fake_store(monkeypatch, connection)
+    workspace = "t_fenced_seed"
+    graph_name = f"st_ws_{workspace}"
+    lock_key = f"shelltrace:graph-lock:{graph_name}"
+    ready_key = f"shelltrace:graph-ready:{graph_name}"
+
+    def seeder(graph):
+        graph.query("CREATE (:FirstWrite)")
+        connection.set(lock_key, "replacement-token", px=300_000)
+        graph.query("CREATE (:FencedWrite)")
+
+    with pytest.raises(TimeoutError, match="Lost graph lock"):
+        store.provision(workspace, seeder, force_seed=True)
+
+    assert connection.query_calls == [(graph_name, "CREATE (:FirstWrite)", None, None)]
+    assert connection.get(ready_key) is None
+    assert connection.get(lock_key) == "replacement-token"

@@ -49,6 +49,33 @@ class WorkspaceNameError(ValueError):
     """Raised when a workspace suffix cannot safely form a graph name."""
 
 
+class _GuardedGraph:
+    """Forward graph calls only while the caller still owns its Redis lease."""
+
+    __slots__ = ("__graph", "__ensure_lock")
+
+    def __init__(self, graph: Graph, ensure_lock: Callable[[], None]):
+        self.__graph = graph
+        self.__ensure_lock = ensure_lock
+
+    def __getattr__(self, name: str):
+        if name in {"client", "schema", "__dict__"} or name.startswith("_"):
+            raise AttributeError(f"{name} is unavailable on a guarded graph")
+
+        attr = getattr(self.__graph, name)
+        if not callable(attr):
+            return attr
+
+        def guarded_call(*args, **kwargs):
+            self.__ensure_lock()
+            result = attr(*args, **kwargs)
+            if isinstance(result, Graph):
+                return _GuardedGraph(result, self.__ensure_lock)
+            return result
+
+        return guarded_call
+
+
 def rows(result: Any) -> list[dict[str, Any]]:
     """Convert a FalkorDB result set into ordinary dictionaries."""
     header = getattr(result, "header", None) or []
@@ -109,27 +136,29 @@ class GraphStore:
 
             if not self._clear_ready_if_owner(graph_name, lock_key, token):
                 raise TimeoutError(f"Lost graph lock before provisioning: {graph_name}")
+            guarded_graph = _GuardedGraph(graph, ensure_lock)
             try:
                 if force_seed:
-                    seeder(graph)
+                    seeder(guarded_graph)
                 else:
                     template_ready = self._ensure_template_ready(seeder)
                     existing = set(self._db.list_graphs())
                     if graph_name in existing:
                         # An unmarked graph may be a failed prior seed. Re-seed it
                         # idempotently instead of copying over an unknown state.
-                        seeder(graph)
+                        seeder(guarded_graph)
                     elif template_ready and self._is_ready(self.s.template_graph):
                         try:
+                            ensure_lock()
                             self._db.connection.execute_command(
                                 "GRAPH.COPY", self.s.template_graph, graph_name
                             )
                         except Exception:
-                            seeder(graph)
+                            seeder(guarded_graph)
                     else:
                         # Another worker is building the template. Never copy it
                         # until its ready marker exists; seed this workspace alone.
-                        seeder(graph)
+                        seeder(guarded_graph)
                 ensure_lock()
                 if not self._mark_ready_if_owner(graph_name, lock_key, token):
                     raise TimeoutError(f"Lost graph lock before marking ready: {graph_name}")
@@ -219,18 +248,29 @@ class GraphStore:
             self._release_lock(key, token)
 
     def _renew_lock(self, key: str, token: str, stop: Event, lost: Event) -> None:
-        interval_seconds = max(0.01, min(_LOCK_TTL_MS / 4000, 30.0))
+        ttl_seconds = _LOCK_TTL_MS / 1000
+        interval_seconds = max(0.001, min(ttl_seconds / 4, 30.0))
+
         while not stop.wait(interval_seconds):
-            try:
-                renewed = self._db.connection.eval(
-                    _RENEW_LOCK_SCRIPT, 1, key, token, _LOCK_TTL_MS
-                )
-            except Exception:
-                lost.set()
-                return
-            if not renewed:
-                lost.set()
-                return
+            retry_seconds = 0.01
+            while not stop.is_set():
+                try:
+                    renewed = self._db.connection.eval(
+                        _RENEW_LOCK_SCRIPT, 1, key, token, _LOCK_TTL_MS
+                    )
+                except Exception:
+                    # An EVAL transport failure does not tell us whether Redis
+                    # extended the lease. Retry while guarded graph calls keep
+                    # fencing work and stop interrupts the retry on context exit.
+                    if stop.wait(retry_seconds):
+                        return
+                    retry_seconds = min(retry_seconds * 2, 1.0)
+                    continue
+
+                if not renewed:
+                    lost.set()
+                    return
+                break
 
     def _assert_lock_owned(self, key: str, token: str, lost: Event) -> None:
         if lost.is_set():
@@ -263,7 +303,7 @@ class GraphStore:
             if not self._clear_ready_if_owner(graph_name, lock_key, lock_token):
                 raise TimeoutError(f"Lost graph lock before seeding template: {graph_name}")
             try:
-                seeder(self.template())
+                seeder(_GuardedGraph(self.template(), ensure_lock))
                 ensure_lock()
                 if not self._mark_ready_if_owner(graph_name, lock_key, lock_token):
                     raise TimeoutError(f"Lost graph lock before marking template ready: {graph_name}")
