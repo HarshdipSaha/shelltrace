@@ -1713,7 +1713,7 @@ Date helpers normalize accepted ISO date forms with `date.fromisoformat(value).i
   - `proof_is_valid(pack: PackResult, evidence, as_of) -> bool`
   - `bounds_sentence(b: Bounds) -> str`
 
-- [ ] **Step 1: Write the failing tests.** Each builds `PackResult`s with a helper `pr(pack, verdict, proof=(), decisive=(), truncated=False)` and evidence with `ev(k, src="synthetic", valid_from=None, valid_to=None, type="OWNS")`.
+- [x] **Step 1: Write the failing tests.** Each builds `PackResult`s with a helper `pr(pack, verdict, proof=(), decisive=(), truncated=False)` and evidence with `ev(k, src="synthetic", valid_from=None, valid_to=None, type="OWNS")`. Additional cases cover missing/empty proofs, pack/evidence key and as-of mismatches, pack hop-bound mismatches, inclusive OWNS endpoints, exclusive designation delisting, requested-pack ordering, absent or empty rulepack sets, and bounds-level truncation.
 
 ```python
 def test_blocked_with_valid_proof_is_exposed(): ...        # OFAC BLOCKED, every proof key valid and sourced → EXPOSED; reasons[0].code == "blocked:OFAC"
@@ -1732,9 +1732,9 @@ def test_clear_states_bounds(): ...                        # → CLEAR_WITHIN_BO
 
 `f"No qualifying ownership or control finding under {', '.join(b.rulepacks)} as of {b.as_of} within {b.max_hops} hops over {', '.join(b.rel_scope)} (snapshot {b.snapshot}, {b.scope_nodes} entities examined)."`
 
-- [ ] **Step 2: Run them to verify they fail** → FAIL
+- [x] **Step 2: Run them to verify they fail** → FAIL (`shelltrace.agent` was not yet implemented; added global-truncation, empty-rulepack, and mismatched-date regressions were also observed failing before their fixes)
 
-- [ ] **Step 3: Implement the authoriser as an ordered rule table.**
+- [x] **Step 3: Implement the authoriser as an ordered rule table.**
   1. `exposed` = packs that are BLOCKED and pass `proof_is_valid`.
   2. `escalate` collects, in order:
      - BLOCKED with invalid proof
@@ -1746,13 +1746,15 @@ def test_clear_states_bounds(): ...                        # → CLEAR_WITHIN_BO
      - unevaluated packs
   3. The disposition is EXPOSED if `exposed` is non-empty, with reasons = exposed + escalate. Otherwise it is ESCALATE if `escalate` is non-empty. Otherwise it is CLEAR_WITHIN_BOUNDS.
 
-  `proof_is_valid` checks every proof key:
+  Pack-specific reasons follow `Bounds.rulepacks` order; red flags and pending aliases retain their input order. A requested pack with no matching result, or a result whose as-of date or hop bound differs from `Bounds`, is treated as unevaluated. An empty rulepack selection or a truncated `Bounds` without a pack-specific truncation reason also escalates, so neither can produce a misleading clear result. A control presumption is escalation context only and does not change ownership arithmetic.
+
+  `proof_is_valid` requires a non-empty proof for the same as-of date as the `PackResult` and checks every proof key matches its evidence item:
   - It is in `evidence`.
   - `src` and `snapshot` are non-null.
   - It is valid on `as_of`. For edges that means `valid_from <= as_of <= valid_to`, with nulls open. For `DESIGNATED` items it means `listed_on <= as_of` and (`delisted_on` is null or `as_of < delisted_on`).
 
-- [ ] **Step 4: Run the tests** → 10 passed
-- [ ] **Step 5: Commit** → `git commit -m "feat: deterministic authoriser with bounded CLEAR statement"`
+- [x] **Step 4: Run the tests** → 23 focused tests and 194 full pinned-DB tests passed
+- [x] **Step 5: Commit** → `git commit -m "feat: deterministic authoriser with bounded CLEAR statement"`
 
 ---
 
