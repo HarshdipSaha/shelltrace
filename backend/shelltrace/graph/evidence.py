@@ -86,8 +86,7 @@ MAX_NEIGHBORHOOD_EDGE_ROWS = 1_000
 
 
 def _date(value: str) -> str:
-    date.fromisoformat(value)
-    return value
+    return date.fromisoformat(value).isoformat()
 
 
 def _limit(value: int, name: str) -> int:

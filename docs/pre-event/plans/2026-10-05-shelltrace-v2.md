@@ -547,6 +547,9 @@ class TraceResult(Strict):
 
 class RedFlag(Strict):
     kind: FlagKind; entity_ids: list[str]; evidence_keys: list[str]; detail: str
+    evidence_status: Literal["complete", "truncated", "unavailable"] | None = None
+    entity_count: int | None = None
+    evidence_count: int | None = None
 
 class AliasCandidate(Strict):
     a_id: str; a_name: str; b_id: str; b_name: str; score: float
@@ -1604,35 +1607,51 @@ def test_search_finds_alias_spellings(store, golden_ws):
 
 - [x] **Step 2: Run them to verify they fail** → FAIL
 
-- [x] **Step 3: Implement `redflags.py`.** Each check runs on `scope, _ = upstream_scope(g, canon_of(g, entity_id), as_of, max_hops)`. If the cycle pattern failed V6, use the fallback: Python Tarjan SCC over the scope's valid `OWNS` edges, flagging components of size 2 or more. Deduplicate flags by `(kind, tuple(sorted(evidence_keys)))`.
+- [x] **Step 3: Implement `redflags.py`.** Each check runs on `scope, _ = upstream_scope(g, canon_of(g, entity_id), as_of, max_hops)`. Detect ownership cycles by fetching valid `OWNS` edges whose canonical endpoints are both in `scope`, then running Tarjan SCC over canonical endpoints. This captures alias-split cycles and cycles longer than six edges while keeping the graph query bounded to the scope. Divestment and designated-control checks join designation records by canonical subject but retain the original designation edge key as evidence. Mass-address counts cover all currently registered entities; return at most 50 registration evidence keys per address and set `RedFlag.evidence_status` (`complete`, `truncated`, or `unavailable`), `entity_count`, and `evidence_count` so callers can distinguish sampled or unavailable evidence from the full entity and evidence counts. Deduplicate flags by `(kind, tuple(sorted(evidence_keys)))`.
 
 ```python
 DIVEST = """
-MATCH (o:Entity)-[r:OWNS]->(x:Entity), (o)-[d:DESIGNATED]->(pg:Program)
-WHERE x.canon IN $scope AND pg.authority IN $auth AND r.valid_to IS NOT NULL AND r.pct IS NOT NULL
+MATCH (o:Entity)-[r:OWNS]->(x:Entity), (ds:Entity)-[d:DESIGNATED]->(pg:Program)
+WHERE x.canon IN $scope AND ds.canon = o.canon AND pg.authority IN $auth
+  AND r.valid_to IS NOT NULL AND r.pct IS NOT NULL
   AND r.pct >= 50.0 AND r.valid_to < d.listed_on AND d.listed_on <= $as_of
   AND (d.delisted_on IS NULL OR d.delisted_on > $as_of)
 RETURN o.id AS owner, x.id AS asset, r.k AS k, r.pct AS pct, r.valid_to AS ended, d.listed_on AS listed, d.k AS dk"""
 # Python keeps rows with (date(listed) - date(ended)).days <= window_days:
 #   RedFlag("divestment_near_listing", [owner, asset], [k, dk], f"{pct:g}% stake ended {ended}, {days} days before listing {listed}")
 
-CYCLE = """
-MATCH p = (x:Entity)-[:OWNS*2..6]->(x)
-WHERE x.canon IN $scope AND all(r IN relationships(p) WHERE (r.valid_from IS NULL OR r.valid_from <= $as_of)
-                                                    AND (r.valid_to IS NULL OR r.valid_to >= $as_of))
-RETURN [n IN nodes(p) | n.id] AS ids, [r IN relationships(p) | r.k] AS ks LIMIT 3"""
+CYCLE_EDGES = """
+MATCH (o:Entity)-[r:OWNS]->(x:Entity)
+WHERE o.canon IN $scope AND x.canon IN $scope
+  AND (r.valid_from IS NULL OR r.valid_from <= $as_of)
+  AND (r.valid_to IS NULL OR r.valid_to >= $as_of)
+RETURN o.id AS owner, o.canon AS owner_canon, x.id AS asset,
+       x.canon AS asset_canon, r.k AS k"""
+```
+
+Tarjan SCC uses the returned canonical edge list and collects all internal edge keys and physical entity IDs for each component.
+
+```python
 
 MASS = """
 MATCH (x:Entity)-[r:REGISTERED_AT]->(a:Address) WHERE x.canon IN $scope
   AND (r.valid_from IS NULL OR r.valid_from <= $as_of) AND (r.valid_to IS NULL OR r.valid_to >= $as_of)
 MATCH (o:Entity)-[r2:REGISTERED_AT]->(a)
 WHERE (r2.valid_from IS NULL OR r2.valid_from <= $as_of) AND (r2.valid_to IS NULL OR r2.valid_to >= $as_of)
-WITH a, collect(DISTINCT r.k) AS ks, count(DISTINCT o) AS n WHERE n >= $mass_min
-RETURN a.id AS address, a.name AS address_name, n, ks"""
+WITH a, count(DISTINCT o) AS n, count(DISTINCT r.k) AS evidence_count
+WHERE n >= $mass_min
+RETURN a.id AS address, a.name AS address_name, n, evidence_count"""
+
+MASS_EVIDENCE = """
+MATCH (o:Entity)-[r:REGISTERED_AT]->(a:Address {id:$address})
+WHERE (r.valid_from IS NULL OR r.valid_from <= $as_of)
+  AND (r.valid_to IS NULL OR r.valid_to >= $as_of)
+RETURN DISTINCT o.id AS entity_id, r.k AS k
+ORDER BY entity_id, k LIMIT $limit"""
 
 CONTROL = """
-MATCH (o:Entity)-[c:CONTROLS|OFFICER_OF]->(x:Entity), (o)-[d:DESIGNATED]->(pg:Program)
-WHERE x.canon IN $scope AND pg.authority IN $auth AND d.listed_on <= $as_of
+MATCH (o:Entity)-[c:CONTROLS|OFFICER_OF]->(x:Entity), (ds:Entity)-[d:DESIGNATED]->(pg:Program)
+WHERE x.canon IN $scope AND ds.canon = o.canon AND pg.authority IN $auth AND d.listed_on <= $as_of
   AND (d.delisted_on IS NULL OR d.delisted_on > $as_of)
   AND (c.valid_from IS NULL OR c.valid_from <= $as_of) AND (c.valid_to IS NULL OR c.valid_to >= $as_of)
 RETURN o.id AS controller, x.id AS controlled, type(c) AS t, c.k AS k, d.k AS dk"""
@@ -1667,6 +1686,8 @@ RETURN DISTINCT e.id AS id"""
 - **Query:** `" ".join(t + "*" for t in norm(query).split())`, for prefix matching.
 - **Unions:** exact `lei`, `imo` and `id` hits come first, then phonetic hits (`e.phon = phon(query)`).
 - **Fallback** if V3 failed: `WHERE e.norm_name CONTAINS $q OR e.core CONTAINS $core`.
+
+Date helpers normalize accepted ISO date forms with `date.fromisoformat(value).isoformat()` before passing them to graph queries.
 
 `neighborhood` returns:
 - the nodes and edges within `depth` ≤ 2 over `OWNS|CONTROLS|SAME_AS|OFFICER_OF|REGISTERED_AT`;

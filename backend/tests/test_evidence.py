@@ -1,5 +1,8 @@
+from uuid import uuid4
+
 import pytest
 
+from shelltrace.db import rw
 from shelltrace.graph.ownership import EntityNotFound
 from shelltrace.graph.evidence import (
     entity_search,
@@ -56,6 +59,33 @@ def test_ownership_stakes_respect_as_of_date(store, golden_ws):
     assert {stake.k for stake in ownership_stakes(graph, "c_fjord", "2022-01-01")} == {
         "syn:G7-1"
     }
+
+
+def test_ownership_stakes_normalizes_as_of_date(store):
+    workspace = f"t_stake_date_{uuid4().hex[:8]}"
+
+    def seed(graph):
+        rw(
+            graph,
+            "CREATE (:Entity {id:'owner', name:'Owner', canon:'owner', kind:'Company'}), "
+            "(:Entity {id:'asset', name:'Asset', canon:'asset', kind:'Company'})",
+        )
+        rw(
+            graph,
+            "MATCH (o:Entity {id:'owner'}), (x:Entity {id:'asset'}) "
+            "CREATE (o)-[:OWNS {k:'test:future', pct:80.0, "
+            "valid_from:'2024-11-01'}]->(x)",
+        )
+
+    try:
+        store.provision(workspace, seeder=seed, force_seed=True)
+        graph = store.workspace(workspace)
+
+        assert ownership_stakes(graph, "asset", "2024-W27-1") == ownership_stakes(
+            graph, "asset", "2024-07-01"
+        ) == []
+    finally:
+        store.drop(workspace)
 
 
 def test_search_finds_both_alias_spellings(store, golden_ws):

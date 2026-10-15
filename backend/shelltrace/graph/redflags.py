@@ -9,8 +9,8 @@ from .ownership import canon_of, upstream_scope
 
 
 DIVESTMENTS = """
-MATCH (o:Entity)-[r:OWNS]->(x:Entity), (o)-[d:DESIGNATED]->(pg:Program)
-WHERE x.canon IN $scope AND pg.authority IN $authorities
+MATCH (o:Entity)-[r:OWNS]->(x:Entity), (ds:Entity)-[d:DESIGNATED]->(pg:Program)
+WHERE x.canon IN $scope AND ds.canon = o.canon AND pg.authority IN $authorities
   AND r.valid_to IS NOT NULL AND r.pct IS NOT NULL AND r.pct >= 50.0
   AND r.valid_to < d.listed_on AND d.listed_on <= $as_of
   AND (d.delisted_on IS NULL OR d.delisted_on > $as_of)
@@ -26,18 +26,6 @@ WHERE o.canon IN $scope AND x.canon IN $scope
 RETURN o.id AS owner, o.canon AS owner_canon, x.id AS asset, x.canon AS asset_canon, r.k AS k
 """
 
-CYCLE_PATHS = """
-MATCH p=(x:Entity)-[rs:OWNS*2..6]->(x)
-WHERE x.canon IN $scope
-  AND all(r IN relationships(p) WHERE
-    (r.valid_from IS NULL OR r.valid_from <= $as_of)
-    AND (r.valid_to IS NULL OR r.valid_to >= $as_of))
-RETURN [n IN nodes(p) | n.id] AS entity_ids,
-       [n IN nodes(p) | n.canon] AS canons,
-       [r IN relationships(p) | r.k] AS keys
-LIMIT 3
-"""
-
 MASS_ADDRESSES = """
 MATCH (s:Entity)-[sr:REGISTERED_AT]->(a:Address)
 WHERE s.canon IN $scope
@@ -47,15 +35,24 @@ WITH DISTINCT a
 MATCH (o:Entity)-[r:REGISTERED_AT]->(a)
 WHERE (r.valid_from IS NULL OR r.valid_from <= $as_of)
   AND (r.valid_to IS NULL OR r.valid_to >= $as_of)
-WITH a, count(DISTINCT o) AS n, collect(DISTINCT o.id) AS entity_ids, collect(DISTINCT r.k) AS keys
+WITH a, count(DISTINCT o) AS n, count(DISTINCT r.k) AS evidence_count
 WHERE n >= $mass_min
-RETURN a.id AS address, a.name AS address_name, n, entity_ids, keys
+RETURN a.id AS address, a.name AS address_name, n, evidence_count
 ORDER BY address
 """
 
+MASS_EVIDENCE = """
+MATCH (o:Entity)-[r:REGISTERED_AT]->(a:Address {id:$address})
+WHERE (r.valid_from IS NULL OR r.valid_from <= $as_of)
+  AND (r.valid_to IS NULL OR r.valid_to >= $as_of)
+RETURN DISTINCT o.id AS entity_id, r.k AS k
+ORDER BY entity_id, k
+LIMIT $limit
+"""
+
 DESIGNATED_CONTROL = """
-MATCH (o:Entity)-[r:CONTROLS|OFFICER_OF]->(x:Entity), (o)-[d:DESIGNATED]->(pg:Program)
-WHERE x.canon IN $scope AND pg.authority IN $authorities
+MATCH (o:Entity)-[r:CONTROLS|OFFICER_OF]->(x:Entity), (ds:Entity)-[d:DESIGNATED]->(pg:Program)
+WHERE x.canon IN $scope AND ds.canon = o.canon AND pg.authority IN $authorities
   AND d.listed_on <= $as_of AND (d.delisted_on IS NULL OR d.delisted_on > $as_of)
   AND (r.valid_from IS NULL OR r.valid_from <= $as_of)
   AND (r.valid_to IS NULL OR r.valid_to >= $as_of)
@@ -63,23 +60,21 @@ RETURN o.id AS controller, x.id AS controlled, type(r) AS rel_type,
        r.k AS k, d.k AS designation_key
 """
 
+MASS_EVIDENCE_BUDGET = 50
+
 
 def _valid_date(value: str) -> str:
-    date.fromisoformat(value)
-    return value
+    return date.fromisoformat(value).isoformat()
 
 
 def _cycles(rows: list[dict]) -> list[tuple[list[str], list[str]]]:
     """Return strongly connected ownership components and their internal keys."""
     adjacency: dict[str, set[str]] = defaultdict(set)
-    ids_by_canon: dict[str, set[str]] = defaultdict(set)
     for row in rows:
         owner = row["owner_canon"]
         asset = row["asset_canon"]
         adjacency[owner].add(asset)
         adjacency.setdefault(asset, set())
-        ids_by_canon[owner].add(row["owner"])
-        ids_by_canon[asset].add(row["asset"])
 
     index = 0
     stack: list[str] = []
@@ -117,20 +112,24 @@ def _cycles(rows: list[dict]) -> list[tuple[list[str], list[str]]]:
         if node not in indices:
             visit(node)
 
-    results = []
-    for component in components:
-        keys = sorted(
-            {
-                row["k"]
-                for row in rows
-                if row["owner_canon"] in component and row["asset_canon"] in component
-            }
-        )
-        entity_ids = sorted(
-            {entity_id for canon in component for entity_id in ids_by_canon[canon]}
-        )
-        results.append((entity_ids, keys))
-    return results
+    component_by_canon = {
+        canon: index
+        for index, component in enumerate(components)
+        for canon in component
+    }
+    ids_by_component: dict[int, set[str]] = defaultdict(set)
+    keys_by_component: dict[int, set[str]] = defaultdict(set)
+    for row in rows:
+        owner_component = component_by_canon.get(row["owner_canon"])
+        if owner_component is None or owner_component != component_by_canon.get(row["asset_canon"]):
+            continue
+        ids_by_component[owner_component].update((row["owner"], row["asset"]))
+        keys_by_component[owner_component].add(row["k"])
+
+    return [
+        (sorted(ids_by_component[index]), sorted(keys_by_component[index]))
+        for index in range(len(components))
+    ]
 
 
 def red_flags(
@@ -173,18 +172,8 @@ def red_flags(
                 )
             )
 
-    try:
-        cycle_rows = ro(g, CYCLE_PATHS, {"scope": scope, "as_of": as_of})
-        cycles = [
-            (sorted(set(row["entity_ids"][:-1])), sorted(set(row["keys"])))
-            for row in cycle_rows
-            if len(set(row["canons"][:-1])) >= 2
-        ]
-    except Exception:
-        # Keep the portable fallback for FalkorDB versions that cannot execute
-        # the bounded variable-length cycle pattern.
-        cycle_rows = ro(g, CYCLE_EDGES, {"scope": scope, "as_of": as_of})
-        cycles = _cycles(cycle_rows)
+    cycle_rows = ro(g, CYCLE_EDGES, {"scope": scope, "as_of": as_of})
+    cycles = _cycles(cycle_rows)
 
     for entity_ids, keys in cycles:
         flags.append(
@@ -201,15 +190,49 @@ def red_flags(
         MASS_ADDRESSES,
         {"scope": scope, "as_of": as_of, "mass_min": mass_min},
     ):
+        evidence_status = "complete"
+        samples = []
+        try:
+            samples = ro(
+                g,
+                MASS_EVIDENCE,
+                {
+                    "address": row["address"],
+                    "as_of": as_of,
+                    "limit": MASS_EVIDENCE_BUDGET + 1,
+                },
+            )
+        except Exception:
+            evidence_status = "unavailable"
+
+        samples = samples[:MASS_EVIDENCE_BUDGET]
+        entity_ids = sorted({sample["entity_id"] for sample in samples})
+        evidence_keys = sorted({sample["k"] for sample in samples if sample["k"]})
+        if evidence_status != "unavailable":
+            if not evidence_keys:
+                evidence_status = "unavailable"
+            elif len(evidence_keys) < row["evidence_count"]:
+                evidence_status = "truncated"
+        detail = (
+            f"{row['n']} currently registered entities share {row['address_name']} "
+            f"({row['address']})."
+        )
+        if evidence_status == "truncated":
+            detail += (
+                f" Registration evidence is truncated to {len(evidence_keys)} of "
+                f"{row['evidence_count']} records."
+            )
+        elif evidence_status == "unavailable":
+            detail += " Registration evidence is unavailable."
         flags.append(
             RedFlag(
                 kind="mass_registration_address",
-                entity_ids=sorted(row["entity_ids"] or []),
-                evidence_keys=sorted(set(row["keys"] or [])),
-                detail=(
-                    f"{row['n']} currently registered entities share {row['address_name']} "
-                    f"({row['address']})."
-                ),
+                entity_ids=entity_ids,
+                evidence_keys=evidence_keys,
+                detail=detail,
+                evidence_status=evidence_status,
+                entity_count=row["n"],
+                evidence_count=row["evidence_count"],
             )
         )
 
