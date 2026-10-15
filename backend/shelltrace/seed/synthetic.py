@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from collections import defaultdict
 
 from ..db import ro, rw
@@ -10,6 +11,7 @@ from ..schema import ensure_schema
 
 
 SRC, SNAP, LIC = "synthetic", "synthetic-v1", "CC0-1.0 (synthetic, disclosed)"
+SYNTHETIC_ACCEPTED_AT = "2026-10-15T00:00:00Z"
 PROGS = [
     ("prog_ofac", "OFAC", "OFAC SDN (synthetic)"),
     ("prog_eu", "EU", "EU Consolidated (synthetic)"),
@@ -122,8 +124,11 @@ DESIGNATIONS = (
 )
 ACCEPTED_ALIASES = [("c_bluelagoon", "c_bluelagoon_alias", "identifier_match:reg_no", "AL-1")]
 CANDIDATES = [
-    ("c_ion_holdings", "c_ion_alias", 0.93, "pending", "name_core_match", "CA-1"),
-    ("c_harbor_trading", "c_harbour_trading", 0.91, "rejected", "identifier_conflict:lei", "CA-2"),
+    ("c_ion_holdings", "c_ion_alias", 0.93, "pending", "name_core_match", "CA-1", {"name_core": "ion"}),
+    (
+        "c_harbor_trading", "c_harbour_trading", 0.91, "rejected", "identifier_conflict:lei", "CA-2",
+        {"identifier_conflict": "lei"},
+    ),
 ]
 
 
@@ -212,12 +217,12 @@ def load_synthetic(g) -> dict:
     )
 
     controls_rows = [
-        _edge_row(SRC, record, "CONTROLS", src_id, dst_id, basis="synthetic", control=control, valid_from=start, valid_to=end)
-        for src_id, dst_id, control, start, end, record in CONTROLS
+        _edge_row(SRC, record, "CONTROLS", src_id, dst_id, basis=basis, valid_from=start, valid_to=end)
+        for src_id, dst_id, basis, start, end, record in CONTROLS
     ]
     _merge_edges(
         g, "CONTROLS", controls_rows,
-        "e.basis=r.basis, e.control=r.control, e.valid_from=r.valid_from, e.valid_to=r.valid_to, "
+        "e.basis=r.basis, e.valid_from=r.valid_from, e.valid_to=r.valid_to, "
         "e.src=r.src, e.src_record=r.src_record, e.snapshot=r.snapshot, e.licence=r.licence",
     )
 
@@ -268,21 +273,26 @@ def load_synthetic(g) -> dict:
         for source_id, target_id, key in ((a_id, b_id, f"syn:{record}"), (b_id, a_id, f"syn:{record}~r")):
             same_as_rows.append({
                 "a": source_id, "b": target_id, "k": key, "method": method,
+                "accepted_at": SYNTHETIC_ACCEPTED_AT,
                 "src": SRC, "src_record": record, "snapshot": SNAP, "licence": LIC,
             })
     _merge_edges(
         g, "SAME_AS", same_as_rows,
-        "e.score=1.0, e.method=r.method, e.accepted_by='seed', e.src=r.src, e.src_record=r.src_record, "
+        "e.score=1.0, e.method=r.method, e.accepted_by='seed', e.accepted_at=r.accepted_at, e.src=r.src, e.src_record=r.src_record, "
         "e.snapshot=r.snapshot, e.licence=r.licence",
     )
 
     candidate_rows = [
-        _edge_row(SRC, record, "CANDIDATE_SAME_AS", a_id, b_id, score=score, state=state, reason=reason)
-        for a_id, b_id, score, state, reason, record in CANDIDATES
+        _edge_row(
+            SRC, record, "CANDIDATE_SAME_AS", a_id, b_id, score=score, state=state, reason=reason,
+            features_json=json.dumps(features, sort_keys=True, separators=(",", ":")),
+        )
+        for a_id, b_id, score, state, reason, record, features in CANDIDATES
     ]
     _merge_edges(
         g, "CANDIDATE_SAME_AS", candidate_rows,
-        "e.score=r.score, e.state=r.state, e.reason=r.reason, e.src=r.src, e.src_record=r.src_record, "
+        "e.score=r.score, e.state=r.state, e.reason=r.reason, e.features_json=r.features_json, "
+        "e.src=r.src, e.src_record=r.src_record, "
         "e.snapshot=r.snapshot, e.licence=r.licence",
     )
 

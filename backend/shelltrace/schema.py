@@ -11,6 +11,7 @@ INDEXES = [
     "CREATE INDEX FOR (e:Entity) ON (e.phon)",
     "CREATE INDEX FOR (p:Program) ON (p.id)",
     "CREATE INDEX FOR (c:Case) ON (c.id)",
+    "CREATE INDEX FOR (c:Case) ON (c.entity_id)",
     "CREATE INDEX FOR (c:Case) ON (c.canon)",
     "CREATE INDEX FOR ()-[r:OWNS]-() ON (r.k)",
     "CREATE FULLTEXT INDEX FOR (n:Entity) ON (n.name)",

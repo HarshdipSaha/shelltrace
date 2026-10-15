@@ -1,3 +1,5 @@
+import json
+
 from shelltrace.db import ro
 from shelltrace.names import core, norm, phon
 
@@ -16,6 +18,12 @@ def test_schema_installs_fulltext_search_on_entity_name(store, golden_ws):
         "CALL db.idx.fulltext.queryNodes('Entity', 'Nord Harbor') YIELD node RETURN node.id AS id",
     )
     assert {row["id"] for row in found} >= {"c_nordharbor"}
+
+
+def test_schema_installs_case_entity_id_range_index(store, golden_ws):
+    graph = store.workspace(golden_ws)
+    indexes = ro(graph, "CALL db.indexes()")
+    assert any(row["label"] == "Case" and "entity_id" in row["properties"] for row in indexes)
 
 
 def test_golden_entity_count_and_alias_canonicalisation(store, golden_ws):
@@ -41,6 +49,32 @@ def test_seed_has_exact_golden_ids_and_evidence_keys(store, golden_ws):
     assert ro(graph, "MATCH (e:Entity {id:'c_nordharbor'}) RETURN e.name AS name")[0]["name"] == "Nord Harbor Logistics Ltd"
     assert ro(graph, "MATCH ()-[r:OWNS {k:'syn:G1-1'}]->() RETURN count(r) AS n")[0]["n"] == 1
     assert ro(graph, "MATCH ()-[r:DESIGNATED {k:'syn:D-p_volkov-prog_ofac'}]->() RETURN count(r) AS n")[0]["n"] == 1
+
+
+def test_seed_control_ground_uses_controls_basis(store, golden_ws):
+    graph = store.workspace(golden_ws)
+    edge = ro(graph, "MATCH ()-[r:CONTROLS {k:'syn:G13-1'}]->() RETURN r.basis AS basis, r.control AS control")[0]
+    assert edge == {"basis": "board_majority", "control": None}
+
+
+def test_seed_alias_edges_have_deterministic_timestamps_and_candidate_features(store, golden_ws):
+    graph = store.workspace(golden_ws)
+    accepted = ro(graph, "MATCH ()-[r:SAME_AS]->() RETURN r.k AS k, r.accepted_at AS accepted_at, r.accepted_by AS accepted_by")
+    assert {row["k"] for row in accepted} == {"syn:AL-1", "syn:AL-1~r"}
+    assert {row["accepted_at"] for row in accepted} == {"2026-10-15T00:00:00Z"}
+    assert {row["accepted_by"] for row in accepted} == {"seed"}
+
+    candidates = {
+        row["k"]: row
+        for row in ro(
+            graph,
+            "MATCH ()-[r:CANDIDATE_SAME_AS]->() RETURN r.k AS k, r.reason AS reason, r.features_json AS features_json",
+        )
+    }
+    assert candidates["syn:CA-1"]["reason"] == "name_core_match"
+    assert json.loads(candidates["syn:CA-1"]["features_json"]) == {"name_core": "ion"}
+    assert candidates["syn:CA-2"]["reason"] == "identifier_conflict:lei"
+    assert json.loads(candidates["syn:CA-2"]["features_json"]) == {"identifier_conflict": "lei"}
 
 
 def test_all_seed_nodes_and_edges_have_provenance(store, golden_ws):

@@ -9,7 +9,7 @@ from .config import Settings
 
 
 _WS = re.compile(r"^[a-z0-9_]{1,32}$")
-_READ_TIMEOUT_MS = 2000
+_TIMEOUT_MS = 2000
 
 
 class WorkspaceNameError(ValueError):
@@ -25,8 +25,8 @@ def rows(result: Any) -> list[dict[str, Any]]:
 
 
 def ro(g: Graph, cypher: str, params: dict | None = None) -> list[dict]:
-    """Run a query through FalkorDB's server-enforced read-only API, capped at 2s."""
-    return rows(g.ro_query(cypher, params or {}, timeout=_READ_TIMEOUT_MS))
+    """Run a query through FalkorDB's server-enforced read-only API."""
+    return rows(g.ro_query(cypher, params or {}, timeout=_TIMEOUT_MS))
 
 
 def rw(g: Graph, cypher: str, params: dict | None = None) -> list[dict]:
@@ -36,6 +36,8 @@ def rw(g: Graph, cypher: str, params: dict | None = None) -> list[dict]:
 
 class GraphStore:
     def __init__(self, settings: Settings):
+        global _TIMEOUT_MS
+        _TIMEOUT_MS = settings.query_timeout_ms
         self.s = settings
         self._db = FalkorDB(
             host=settings.falkor_host,

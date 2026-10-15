@@ -50,6 +50,33 @@ def test_read_helper_forwards_parameters_and_two_second_timeout():
     assert graph.call == ("RETURN $value AS value", {"value": 3}, 2000)
 
 
+def test_store_timeout_setting_updates_ro_timeout_and_is_restored():
+    import shelltrace.db as db
+
+    class RecordingGraph:
+        def ro_query(self, cypher, params, timeout):
+            self.timeout = timeout
+
+            class Result:
+                header = [[0, "value"]]
+                result_set = [[1]]
+
+            return Result()
+
+    original_timeout = db._TIMEOUT_MS
+    try:
+        db.GraphStore(Settings(query_timeout_ms=1375))
+        configured_graph = RecordingGraph()
+        assert ro(configured_graph, "RETURN 1 AS value") == [{"value": 1}]
+        assert configured_graph.timeout == 1375
+    finally:
+        db._TIMEOUT_MS = original_timeout
+
+    default_graph = RecordingGraph()
+    assert ro(default_graph, "RETURN 1 AS value") == [{"value": 1}]
+    assert default_graph.timeout == original_timeout == 2000
+
+
 def test_read_helper_returns_golden_entity_as_dicts(store, golden_ws):
     graph = store.workspace(golden_ws)
     assert ro(
