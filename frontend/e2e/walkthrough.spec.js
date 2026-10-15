@@ -62,3 +62,40 @@ test('entity search ignores a response for an older query', async ({ page }) => 
   await expect(page.getByRole('option', { name: /Current Result/ })).toBeVisible();
   await expect(page.getByRole('option', { name: /Older Result/ })).toHaveCount(0);
 });
+
+test('late health response does not change the mode of an active case', async ({ page }) => {
+  let markHealthRequestStarted;
+  let releaseHealthRequest;
+  let markCaseRequestStarted;
+  let releaseCaseRequest;
+  const healthRequestStarted = new Promise((resolve) => { markHealthRequestStarted = resolve; });
+  const healthRequestRelease = new Promise((resolve) => { releaseHealthRequest = resolve; });
+  const caseRequestStarted = new Promise((resolve) => { markCaseRequestStarted = resolve; });
+  const caseRequestRelease = new Promise((resolve) => { releaseCaseRequest = resolve; });
+
+  await page.route('**/api/health', async (route) => {
+    markHealthRequestStarted();
+    await healthRequestRelease;
+    await route.fulfill({
+      json: { status: 'ok', graph: 'st_facts_synthetic', llm: 'claude-opus-5', node_count: 1 },
+    });
+  });
+  await page.route('**/api/cases', async (route) => {
+    markCaseRequestStarted();
+    await caseRequestRelease;
+    await route.continue();
+  });
+
+  await page.goto('/');
+  await healthRequestStarted;
+  await page.getByPlaceholder('Search company, LEI or IMO').fill('nord harbor');
+  await page.getByRole('option', { name: /Nord Harbor Logistics/ }).click();
+  await expect(page.getByRole('radio', { name: /Agent/ })).toBeDisabled();
+  await page.getByRole('button', { name: 'Run investigation' }).click();
+  await caseRequestStarted;
+
+  releaseHealthRequest();
+  await expect(page.getByRole('radio', { name: /Playbook/ })).toBeChecked();
+  releaseCaseRequest();
+  await expect(page.getByTestId('validated-badge')).toHaveText(/EXPOSED/);
+});

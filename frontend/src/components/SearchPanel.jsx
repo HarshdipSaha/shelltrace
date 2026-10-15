@@ -78,6 +78,7 @@ function SearchPanel({
   };
 
   const agentUnavailable = health?.llm === 'deterministic';
+  const agentChecking = !health;
 
   return (
     <section className="search-panel panel" aria-labelledby="search-title">
@@ -180,7 +181,7 @@ function SearchPanel({
               name="mode"
               value="agent"
               checked={mode === 'agent'}
-              disabled={agentUnavailable || loading}
+              disabled={agentUnavailable || agentChecking || loading}
               onChange={() => onChange({ mode: 'agent' })}
             />
             <span><strong>Agent</strong><small>Claude-assisted</small></span>
@@ -198,6 +199,7 @@ function SearchPanel({
           </label>
         </div>
         {agentUnavailable && <p className="mode-note">Agent mode is unavailable without a configured model key.</p>}
+        {agentChecking && <p className="mode-note">Confirming model availability; playbook mode remains ready.</p>}
       </fieldset>
 
       <button className="run-button" type="button" disabled={loading || !entity || !packs.length} onClick={onRun}>

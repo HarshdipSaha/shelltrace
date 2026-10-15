@@ -28,10 +28,6 @@ function App() {
       .then((data) => {
         if (!active) return;
         setService({ loading: false, health: data, error: '' });
-        setForm((current) => ({
-          ...current,
-          mode: data.llm === 'deterministic' ? 'playbook' : 'agent',
-        }));
       })
       .catch((reason) => {
         if (!active) return;
