@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { health, openCase } from './api.js';
 import CaseHeader from './components/CaseHeader.jsx';
+import EvidenceGraph from './components/EvidenceGraph.jsx';
+import EvidenceLocker from './components/EvidenceLocker.jsx';
+import RulePackPanel from './components/RulePackPanel.jsx';
 import SearchPanel from './components/SearchPanel.jsx';
+import TimeSlider from './components/TimeSlider.jsx';
 import Timeline from './components/Timeline.jsx';
 
 const INITIAL_FORM = {
@@ -96,7 +100,7 @@ function App() {
     }
   }, [entity, form]);
 
-  const selectedEvidence = result?.evidence?.[selected] ?? null;
+  const changeCaseDate = useCallback((asOf) => runCase({ asOf }), [runCase]);
 
   return (
     <div className="app-shell">
@@ -206,28 +210,8 @@ function App() {
               </div>
             )}
           </section>
-
-          <section className="record-panel" aria-label="Selected evidence record">
-            <div className="record-heading">
-              <div>
-                <p className="eyebrow">AUDIT RECORD</p>
-                <h2>{selectedEvidence ? 'Selected evidence' : 'Evidence detail'}</h2>
-              </div>
-              {selected && <code className="record-key">{selected}</code>}
-            </div>
-            {selectedEvidence ? (
-              <div className="record-detail">
-                <div><span>Relationship</span><strong>{selectedEvidence.type}</strong></div>
-                <div><span>From</span><strong>{selectedEvidence.from_name || selectedEvidence.from_id}</strong></div>
-                <div><span>To</span><strong>{selectedEvidence.to_name || selectedEvidence.to_id}</strong></div>
-                {selectedEvidence.pct != null && <div><span>Share</span><strong>{selectedEvidence.pct}%</strong></div>}
-                <div><span>Source record</span><strong>{selectedEvidence.src_record || selectedEvidence.src || 'Not specified'}</strong></div>
-                <div><span>Valid dates</span><strong>{selectedEvidence.valid_from || '—'} to {selectedEvidence.valid_to || 'present'}</strong></div>
-              </div>
-            ) : (
-              <p className="record-hint">Select an evidence key in the timeline to inspect its source record.</p>
-            )}
-          </section>
+          <EvidenceGraph result={result} onSelect={setSelected} />
+          <TimeSlider result={result} loading={loading} onChangeAsOf={changeCaseDate} />
         </main>
 
         <aside className="right-rail" aria-label="Case context">
@@ -240,6 +224,9 @@ function App() {
               : 'Select a subject and set the investigation date and rule packs.'}</p>
             {result && <div className="context-packs">{result.rulepacks.map((pack) => <span key={pack}>{pack}</span>)}</div>}
           </section>
+
+          <RulePackPanel result={result} />
+          <EvidenceLocker result={result} selectedKey={selected} />
 
           <section className="context-card context-card--quiet">
             <p className="eyebrow">DECISION STANDARD</p>
