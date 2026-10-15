@@ -31,4 +31,5 @@ jobs:
       - name: Verify FalkorDB platform facts
         run: python scripts/verify_falkordb.py
       - name: Run backend tests
+        working-directory: backend
         run: python -m pytest -q
