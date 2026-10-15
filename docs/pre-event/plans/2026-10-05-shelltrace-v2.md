@@ -1332,7 +1332,7 @@ Expected: all PASS, including 200 hypothesis examples. If the differential fails
   - `trace(g, entity_id, as_of, max_hops, authorities, mode="ownership", exclude=()) -> TraceResult | None`
   - `trace_cypher(max_hops, mode) -> str`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 from shelltrace.graph.trace import trace
@@ -1366,14 +1366,14 @@ def test_context_mode_reaches_officer_links(store, golden_ws):
     assert t is not None and any(e.type == "OFFICER_OF" for e in t.edges)
 ```
 
-- [ ] **Step 2: Run them to verify they fail** → FAIL
+- [x] **Step 2: Run them to verify they fail** → FAIL (collection fails because `graph.trace` does not exist)
 
-- [ ] **Step 3: Implement `trace.py`.** `SAME_AS` is stored in both directions, so a directed pattern from the designated party down to the target is alias-aware. The validity predicate sits inside `all(...)`, never as a post-filter on `shortestPath`.
+- [x] **Step 3: Implement `trace.py`.** `SAME_AS` is stored in both directions, so a directed pattern from the designated party down to the target is alias-aware. The validity predicate sits inside `all(...)`, never as a post-filter on `shortestPath`.
 
 ```python
 OWN_RELS, CTX_RELS = "OWNS|CONTROLS|SAME_AS", "OWNS|CONTROLS|SAME_AS|OFFICER_OF|REGISTERED_AT"
-DES = ("MATCH (t)-[d:DESIGNATED]->(pg:Program) WHERE pg.authority IN $auth AND d.listed_on <= $as_of "
-       "AND (d.delisted_on IS NULL OR d.delisted_on > $as_of)")
+DES = ("MATCH (t)-[d:DESIGNATED]->(pg:Program) WHERE pg.authority IN $auth AND NOT d.k IN $exclude "
+       "AND d.listed_on <= $as_of AND (d.delisted_on IS NULL OR d.delisted_on > $as_of)")
 
 def trace_cypher(max_hops: int, mode: str) -> str:
     h = max(1, min(6, int(max_hops)))
@@ -1388,11 +1388,11 @@ def trace_cypher(max_hops: int, mode: str) -> str:
 ```
 
 The `trace(...)` body:
-1. Run the zero-hop check: `MATCH (t:Entity {id:$id}) {DES} RETURN t, d.k AS dk, …`. A hit returns a `TraceResult` with `hops=0` and one node.
+1. Run the zero-hop check: `MATCH (t:Entity {id:$id}) {DES} RETURN t, d.k AS dk, …`. A hit returns a `TraceResult` with `hops=0` and one node. Apply `exclude` to the designation edge as well as every path edge.
 2. Otherwise run `trace_cypher` through `ro`. Map the FalkorDB `Node` and `Edge` objects to `TraceNode` and `TraceEdge`: properties `id`, `name`, `kind`, `country`; edge `k`, `pct`, `pct_basis`→`basis`, `role`, `valid_from`, `valid_to`, `src`, `src_record`. Resolve `from_id`/`to_id` from the `src_node`/`dest_node` internal IDs through the path's node list, as v1's `serialize_path` did.
 3. Put the `cypher` text and `latency_ms` on the result.
 
-- [ ] **Step 4: Run the tests** → `pytest tests/test_trace.py -v` → 6 passed
+- [x] **Step 4: Run the tests** → `pytest tests/test_trace.py -v` → 9 passed
 - [ ] **Step 5: Commit** → `git commit -m "feat: dated, alias-aware exposure trace (ownership and context modes)"`
 
 ---
