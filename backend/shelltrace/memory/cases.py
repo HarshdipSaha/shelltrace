@@ -69,9 +69,12 @@ WATCHED = """MATCH (c:Case)-[:WATCHES]->(w:Watch {active:true}) WHERE c.canon IN
                     c.max_hops AS max_hops, c.disposition AS disposition"""
 EVENT = """MERGE (e:Event {id:$id}) ON CREATE SET e.kind=$kind, e.payload_json=$payload, e.at=$at, e.fresh_token=$token
           WITH e, e.fresh_token = $token AS fresh REMOVE e.fresh_token RETURN fresh"""
-NOTIFY = """MERGE (n:Notification {id:$nid}) ON CREATE SET n.case_id=$case_id, n.old=$old, n.new=$new, n.diff_json=$diff,
+NOTIFY = """MATCH (old:Case {id:$case_id})
+          MERGE (n:Notification {id:$nid}) ON CREATE SET n.case_id=$case_id, n.old=$old, n.new=$new, n.diff_json=$diff,
             n.event_id=$eid, n.at=$at, n.fresh_token=$token
-            WITH n, n.fresh_token = $token AS fresh REMOVE n.fresh_token RETURN fresh"""
+          WITH n, old, n.fresh_token = $token AS fresh
+          MERGE (n)-[:NOTIFIED]->(old)
+          REMOVE n.fresh_token RETURN fresh"""
 RECALL = """MATCH (c:Case) WHERE c.canon IN $canons AND c.status = 'done' AND ($exclude IS NULL OR c.id <> $exclude)
             RETURN c.id AS case_id, c.entity_id AS entity_id, c.as_of AS as_of, c.disposition AS disposition,
                    c.opened_at AS opened_at ORDER BY c.opened_at DESC LIMIT $limit"""
