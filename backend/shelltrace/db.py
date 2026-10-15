@@ -298,7 +298,6 @@ class GraphStore:
         graph_name = self.s.template_graph
         if self._is_ready(graph_name):
             return True
-
         lock_key = self._lock_key(graph_name)
         lock_token = uuid4().hex
         acquired = self._db.connection.set(
@@ -323,3 +322,61 @@ class GraphStore:
                 self._clear_ready_if_owner(graph_name, lock_key, lock_token)
                 raise
             return True
+
+
+@contextmanager
+def graph_operation_lock(g: Graph):
+    """Serialize a multi-query graph mutation across processes by graph name."""
+    connection = g.client.connection
+    lock_key = GraphStore._lock_key(g.name)
+    token = uuid4().hex
+    deadline = time.monotonic() + _LOCK_WAIT_SECONDS
+    while not connection.set(lock_key, token, nx=True, px=_LOCK_TTL_MS):
+        if time.monotonic() >= deadline:
+            raise TimeoutError(f"Timed out acquiring graph lock: {lock_key}")
+        time.sleep(0.05)
+
+    stop = Event()
+    lost = Event()
+
+    def ensure_lock() -> None:
+        if lost.is_set():
+            raise TimeoutError(f"Lost graph lock: {lock_key}")
+        owner = connection.get(lock_key)
+        if isinstance(owner, bytes):
+            owner = owner.decode("ascii", errors="ignore")
+        if owner != token:
+            lost.set()
+            raise TimeoutError(f"Lost graph lock: {lock_key}")
+
+    def renew() -> None:
+        ttl_seconds = _LOCK_TTL_MS / 1000
+        interval_seconds = max(0.001, min(ttl_seconds / 4, 30.0))
+        while not stop.wait(interval_seconds):
+            retry_seconds = 0.01
+            while not stop.is_set():
+                try:
+                    renewed = connection.eval(
+                        _RENEW_LOCK_SCRIPT, 1, lock_key, token, _LOCK_TTL_MS
+                    )
+                except Exception:
+                    if stop.wait(retry_seconds):
+                        return
+                    retry_seconds = min(retry_seconds * 2, 1.0)
+                    continue
+                if not renewed:
+                    lost.set()
+                break
+            if lost.is_set():
+                return
+
+    heartbeat = Thread(target=renew, daemon=True)
+    heartbeat.start()
+    try:
+        ensure_lock()
+        yield _GuardedGraph(g, ensure_lock)
+        ensure_lock()
+    finally:
+        stop.set()
+        heartbeat.join()
+        connection.eval(_RELEASE_LOCK_SCRIPT, 1, lock_key, token)

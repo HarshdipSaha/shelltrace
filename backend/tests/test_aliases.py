@@ -1,8 +1,10 @@
+from threading import Barrier, Event, Lock, Thread
 from uuid import uuid4
 
 import pytest
 
-from shelltrace.db import ro, rw
+from shelltrace.db import GraphStore, ro, rw
+from shelltrace.graph import aliases as aliases_module
 from shelltrace.graph.aliases import (
     ClusterTooLarge,
     IdentifierConflict,
@@ -52,6 +54,20 @@ def test_score_pair_identifier_conflicts_and_matches():
     assert state == "pending" and score >= 0.85
 
 
+def test_reg_no_conflict_overrides_another_identifier_match_only_in_same_country():
+    matched_lei_conflict = score_pair(
+        E(name="Alpha Ltd", country="HK", lei="L1", reg_no="R1"),
+        E(name="Alpha Ltd", country="HK", lei="L1", reg_no="R2"),
+    )
+    assert matched_lei_conflict[1:] == ("rejected", "identifier_conflict:reg_no")
+
+    different_countries = score_pair(
+        E(name="Alpha Ltd", country="HK", lei="L1", reg_no="R1"),
+        E(name="Alpha Ltd", country="SG", lei="L1", reg_no="R2"),
+    )
+    assert different_countries[1:] == ("accepted", "identifier_match:lei")
+
+
 def test_candidate_generation_is_idempotent_and_keeps_candidates_separate(
     store,
 ):
@@ -90,6 +106,37 @@ def test_candidate_generation_is_idempotent_and_keeps_candidates_separate(
             "MATCH (a:Entity {id:'c_bluelagoon'})-[r:SAME_AS]-(b:Entity {id:'c_bluelagoon_alias'}) "
             "RETURN count(r) AS n",
         )[0]["n"] == 2
+    finally:
+        store.drop(workspace)
+
+
+def test_conflicting_imo_blocks_auto_merge_even_when_lei_matches(store):
+    workspace = fresh(store)
+    graph = store.workspace(workspace)
+    try:
+        rw(
+            graph,
+            "MATCH (a:Entity {id:'c_ion_holdings'}), (b:Entity {id:'c_ion_alias'}) "
+            "SET a.lei='SHARED-LEI', b.lei='SHARED-LEI', "
+            "a.imo='IMO-1111111', b.imo='IMO-2222222'",
+        )
+
+        generate_candidates(graph)
+
+        candidate = next(
+            item
+            for item in list_candidates(graph, "c_ion_holdings")
+            if item.b_id == "c_ion_alias"
+        )
+        assert (candidate.state, candidate.reason) == (
+            "rejected",
+            "identifier_conflict:imo",
+        )
+        assert ro(
+            graph,
+            "MATCH (a:Entity {id:'c_ion_holdings'})-[r:SAME_AS]-"
+            "(b:Entity {id:'c_ion_alias'}) RETURN count(r) AS n",
+        )[0]["n"] == 0
     finally:
         store.drop(workspace)
 
@@ -269,6 +316,62 @@ def test_merging_two_non_singleton_clusters_needs_confirmation(store):
         store.drop(workspace)
 
 
+def test_candidate_generation_routes_cluster_merge_to_confirmation(store):
+    workspace = fresh(store)
+    graph = store.workspace(workspace)
+    try:
+        decide(
+            graph,
+            "c_ion_holdings",
+            "c_ion_alias",
+            accept=True,
+            by="analyst_1",
+            reason="same registry entry",
+        )
+        rw(
+            graph,
+            "MATCH (a:Entity {id:'c_ion_holdings'}), (b:Entity {id:'c_bluelagoon'}) "
+            "SET a.lei='CONFIRM-LEI', b.lei='CONFIRM-LEI'",
+        )
+
+        generate_candidates(graph)
+
+        candidate = next(
+            item
+            for item in list_candidates(graph, "c_ion_holdings")
+            if item.b_id == "c_bluelagoon"
+        )
+        assert candidate.state == "pending"
+        assert candidate.reason == "confirmation_required:cluster_merge"
+        assert candidate.features == {
+            "identifier_match": "lei",
+            "confirmation_required": "cluster_merge",
+        }
+        assert ro(
+            graph,
+            "MATCH (a:Entity {id:'c_ion_holdings'}), (b:Entity {id:'c_bluelagoon'}) "
+            "RETURN a.canon = b.canon AS same",
+        )[0]["same"] is False
+
+        result = decide(
+            graph,
+            "c_ion_holdings",
+            "c_bluelagoon",
+            accept=True,
+            by="analyst_2",
+            reason="reviewed cluster merge",
+            confirm_merge=True,
+        )
+        assert result["accepted"] is True
+        assert ro(
+            graph,
+            "MATCH (a:Entity {id:'c_ion_holdings'}), (b:Entity {id:'c_bluelagoon'}) "
+            "RETURN a.canon = b.canon AS same",
+        )[0]["same"] is True
+    finally:
+        store.drop(workspace)
+
+
 def test_acceptance_that_would_exceed_cluster_cap_is_rejected(store):
     workspace = fresh(store)
     graph = store.workspace(workspace)
@@ -300,6 +403,23 @@ def test_acceptance_that_would_exceed_cluster_cap_is_rejected(store):
             {"rows": links},
         )
         recompute_clusters(graph)
+        rw(
+            graph,
+            "MATCH (a:Entity {id:'c_bluelagoon'}), (b:Entity {id:'cluster_newcomer'}) "
+            "SET a.lei='OVER-CAP-LEI', b.lei='OVER-CAP-LEI'",
+        )
+
+        generate_candidates(graph)
+
+        candidate = next(
+            item
+            for item in list_candidates(graph, "c_bluelagoon")
+            if item.b_id == "cluster_newcomer"
+        )
+        assert (candidate.state, candidate.reason) == (
+            "rejected",
+            "cluster_size_limit",
+        )
 
         with pytest.raises(ClusterTooLarge):
             decide(
@@ -316,5 +436,111 @@ def test_acceptance_that_would_exceed_cluster_cap_is_rejected(store):
             "MATCH (a:Entity {id:'c_bluelagoon'})-[r:SAME_AS]-(b:Entity {id:'cluster_newcomer'}) "
             "RETURN count(r) AS n",
         )[0]["n"] == 0
+    finally:
+        store.drop(workspace)
+
+
+def test_concurrent_accepts_preserve_hard_cluster_cap(store, monkeypatch):
+    workspace = fresh(store)
+    graph_a = store.workspace(workspace)
+    graph_b = GraphStore(store.s).workspace(workspace)
+    try:
+        members = [
+            {"id": f"concurrent_member_{index:02d}", "name": f"Concurrent Member {index:02d}"}
+            for index in range(22)
+        ]
+        rw(
+            graph_a,
+            "UNWIND $rows AS row CREATE (:Entity {id:row.id, name:row.name, "
+            "kind:'Company', country:'HK', canon:row.id})",
+            {"rows": members},
+        )
+        links = []
+        for member in members:
+            key = f"concurrent:{member['id']}"
+            links.extend(
+                [
+                    {"a": "c_bluelagoon", "b": member["id"], "k": key},
+                    {"a": member["id"], "b": "c_bluelagoon", "k": f"{key}~r"},
+                ]
+            )
+        rw(
+            graph_a,
+            "UNWIND $rows AS row MATCH (a:Entity {id:row.a}), (b:Entity {id:row.b}) "
+            "CREATE (a)-[:SAME_AS {k:row.k, score:1.0, method:'test', "
+            "accepted_by:'test', accepted_at:'2026-10-15T00:00:00Z'}]->(b)",
+            {"rows": links},
+        )
+        recompute_clusters(graph_a)
+        initial_canon = ro(
+            graph_a,
+            "MATCH (e:Entity {id:'c_bluelagoon'}) RETURN e.canon AS canon",
+        )[0]["canon"]
+        assert ro(
+            graph_a,
+            "MATCH (e:Entity {canon:$canon}) RETURN count(e) AS n",
+            {"canon": initial_canon},
+        )[0]["n"] == 24
+
+        original_cluster_sizes = aliases_module._cluster_sizes
+        calls_lock = Lock()
+        calls = 0
+        second_size_check = Event()
+
+        def synchronized_cluster_sizes(graph, canon_a, canon_b):
+            nonlocal calls
+            sizes = original_cluster_sizes(graph, canon_a, canon_b)
+            with calls_lock:
+                calls += 1
+                call_number = calls
+            if call_number == 1:
+                second_size_check.wait(timeout=0.4)
+            else:
+                second_size_check.set()
+            return sizes
+
+        monkeypatch.setattr(aliases_module, "_cluster_sizes", synchronized_cluster_sizes)
+        start = Barrier(3)
+        outcomes = []
+
+        def accept(graph, entity_id):
+            start.wait(timeout=3)
+            try:
+                outcomes.append(
+                    decide(
+                        graph,
+                        "c_bluelagoon",
+                        entity_id,
+                        accept=True,
+                        by="concurrent_test",
+                        reason="concurrency cap test",
+                    )
+                )
+            except Exception as exc:
+                outcomes.append(exc)
+
+        workers = [
+            Thread(target=accept, args=(graph_a, "c_juniper")),
+            Thread(target=accept, args=(graph_b, "c_aegean")),
+        ]
+        for worker in workers:
+            worker.start()
+        start.wait(timeout=3)
+        for worker in workers:
+            worker.join(timeout=10)
+
+        assert all(not worker.is_alive() for worker in workers)
+        assert sum(isinstance(outcome, dict) and outcome["accepted"] for outcome in outcomes) == 1
+        assert sum(isinstance(outcome, ClusterTooLarge) for outcome in outcomes) == 1
+
+        canon = ro(
+            graph_a,
+            "MATCH (e:Entity {id:'c_bluelagoon'}) RETURN e.canon AS canon",
+        )[0]["canon"]
+        assert ro(
+            graph_a,
+            "MATCH (e:Entity {canon:$canon}) RETURN count(e) AS n",
+            {"canon": canon},
+        )[0]["n"] == 25
     finally:
         store.drop(workspace)

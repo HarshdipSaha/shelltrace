@@ -7,7 +7,7 @@ from itertools import combinations
 from rapidfuzz import fuzz
 from rapidfuzz.distance import JaroWinkler
 
-from ..db import ro, rw
+from ..db import graph_operation_lock, ro, rw
 from ..models import AliasCandidate
 from ..names import core
 from .clusters import recompute_clusters
@@ -33,17 +33,21 @@ class IdentifierConflict(Exception):
 
 
 def score_pair(a: dict, b: dict) -> tuple[float, str, str]:
+    matching_identifiers = []
     for field in ("lei", "imo"):
         left, right = a.get(field), b.get(field)
         if left and right:
-            if left == right:
-                return 1.0, "accepted", f"identifier_match:{field}"
-            return 0.0, "rejected", f"identifier_conflict:{field}"
+            if left != right:
+                return 0.0, "rejected", f"identifier_conflict:{field}"
+            matching_identifiers.append(field)
 
     if a.get("reg_no") and b.get("reg_no") and a.get("country") == b.get("country"):
-        if a["reg_no"] == b["reg_no"]:
-            return 1.0, "accepted", "identifier_match:reg_no"
-        return 0.0, "rejected", "identifier_conflict:reg_no"
+        if a["reg_no"] != b["reg_no"]:
+            return 0.0, "rejected", "identifier_conflict:reg_no"
+        matching_identifiers.append("reg_no")
+
+    if matching_identifiers:
+        return 1.0, "accepted", f"identifier_match:{matching_identifiers[0]}"
 
     core_a, core_b = core(a.get("name", "")), core(b.get("name", ""))
     if not core_a or not core_b:
@@ -234,14 +238,45 @@ def generate_candidates(g) -> dict[str, int]:
             counts["rejected"] += 1
             continue
         if state == "accepted":
-            decide(
-                g,
-                a_id,
-                b_id,
-                accept=True,
-                by="auto:identifier",
-                reason=reason,
-            )
+            try:
+                decide(
+                    g,
+                    a_id,
+                    b_id,
+                    accept=True,
+                    by="auto:identifier",
+                    reason=reason,
+                )
+            except MergeNeedsConfirmation:
+                _store_candidate(
+                    g,
+                    a_id,
+                    b_id,
+                    score,
+                    "pending",
+                    "confirmation_required:cluster_merge",
+                    {
+                        **_candidate_features(a, b, reason),
+                        "confirmation_required": "cluster_merge",
+                    },
+                )
+                counts["pending"] += 1
+                continue
+            except ClusterTooLarge:
+                _store_candidate(
+                    g,
+                    a_id,
+                    b_id,
+                    score,
+                    "rejected",
+                    "cluster_size_limit",
+                    {
+                        **_candidate_features(a, b, reason),
+                        "acceptance_blocked": "cluster_size_limit",
+                    },
+                )
+                counts["rejected"] += 1
+                continue
         elif state in {"pending", "rejected"}:
             _store_candidate(
                 g,
@@ -274,6 +309,27 @@ def decide(
     by: str,
     reason: str,
     confirm_merge: bool = False,
+) -> dict:
+    with graph_operation_lock(g) as locked_graph:
+        return _decide_locked(
+            locked_graph,
+            a_id,
+            b_id,
+            accept,
+            by,
+            reason,
+            confirm_merge,
+        )
+
+
+def _decide_locked(
+    g,
+    a_id: str,
+    b_id: str,
+    accept: bool,
+    by: str,
+    reason: str,
+    confirm_merge: bool,
 ) -> dict:
     canon_a, canon_b = canon_of(g, a_id), canon_of(g, b_id)
     rows = ro(

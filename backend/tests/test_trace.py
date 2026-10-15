@@ -1,4 +1,11 @@
-from shelltrace.graph.trace import trace, trace_cypher
+from uuid import uuid4
+
+import pytest
+
+from shelltrace.db import rw
+from shelltrace.graph.trace import TraceUnavailable, trace, trace_cypher
+from shelltrace.seed.synthetic import load_synthetic
+from shelltrace.graph import trace as trace_module
 
 
 ALL = ("OFAC", "EU", "UK")
@@ -91,3 +98,41 @@ def test_trace_query_filters_dates_inside_a_bounded_path():
     assert "r.valid_from <= $as_of" in query
     assert "r.valid_to >= $as_of" in query
     assert "CANDIDATE_SAME_AS" not in query
+
+
+def test_trace_path_candidate_cap_returns_unavailable_not_no_trace(
+    store, monkeypatch
+):
+    workspace = f"t_trace_{uuid4().hex[:8]}"
+    store.provision(workspace, seeder=load_synthetic, force_seed=True)
+    graph = store.workspace(workspace)
+    monkeypatch.setattr(trace_module, "TRACE_PATH_CANDIDATE_BUDGET", 2)
+    try:
+        rw(
+            graph,
+            "CREATE (p:Program {id:'trace_prog', authority:'OFAC', name:'Trace Test'}), "
+            "(target:Entity {id:'trace_target', name:'Trace Target', kind:'Company', country:'HK', canon:'trace_target'}) "
+            "WITH p, target UNWIND range(0, 2) AS i "
+            "CREATE (source:Entity {id:'trace_source_' + toString(i), name:'Trace Source ' + toString(i), "
+            "kind:'Company', country:'HK'}) "
+            "WITH source, p, target, i "
+            "CREATE (source)-[:OWNS {k:'trace_owns_' + toString(i), valid_from:'2020-01-01'}]->(target) "
+            "WITH source, p, i "
+            "CREATE (source)-[:DESIGNATED {k:'trace_designation_' + toString(i), "
+            "listed_on:'2020-01-01'}]->(p)",
+        )
+
+        with pytest.raises(TraceUnavailable, match="candidate path cap"):
+            trace(graph, "trace_target", "2024-01-01", 6, ("OFAC",))
+    finally:
+        store.drop(workspace)
+
+
+def test_trace_query_failure_is_explicitly_unavailable(store, golden_ws, monkeypatch):
+    def fail_query(*args, **kwargs):
+        raise TimeoutError("simulated FalkorDB query timeout")
+
+    monkeypatch.setattr(trace_module, "ro", fail_query)
+
+    with pytest.raises(TraceUnavailable, match="trace query failed"):
+        trace(store.workspace(golden_ws), "c_nordharbor", "2024-01-01", 6, ALL)
