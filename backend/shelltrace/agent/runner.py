@@ -198,6 +198,8 @@ async def run_case(
     brain: Brain | None,
     settings,
     snapshot: str,
+    *,
+    actor_override: str | None = None,
 ) -> CaseResult:
     started = time.monotonic()
     graph = cases.g
@@ -205,7 +207,11 @@ async def run_case(
     case_id = cases.open(req, canon, snapshot)
     cases.append_step(
         case_id,
-        StepIn(kind="intake", args=req.model_dump(), actor="system"),
+        StepIn(
+            kind="intake",
+            args=req.model_dump(),
+            actor=actor_override or "system",
+        ),
     )
 
     calls: list[tuple[str, dict[str, Any], ToolCallResult]] = []
@@ -248,7 +254,7 @@ async def run_case(
                 probability=probability,
                 rationale=rationale,
                 latency_ms=result.latency_ms,
-                actor=actor,
+                actor=actor_override or actor,
                 fallback_reason=(
                     None
                     if result.ok
@@ -279,7 +285,7 @@ async def run_case(
                     case_id,
                     StepIn(
                         kind="decision",
-                        actor=brain.model_id,
+                        actor=actor_override or brain.model_id,
                         rationale="The exploration wall-clock budget was exhausted.",
                         fallback_reason="budget_exhausted",
                     ),
@@ -304,7 +310,7 @@ async def run_case(
                     case_id,
                     StepIn(
                         kind="decision",
-                        actor=brain.model_id,
+                        actor=actor_override or brain.model_id,
                         rationale=str(exc),
                         fallback_reason="brain_unavailable",
                     ),
@@ -315,7 +321,7 @@ async def run_case(
                     case_id,
                     StepIn(
                         kind="decision",
-                        actor=brain.model_id,
+                        actor=actor_override or brain.model_id,
                         rationale="The reasoning call exceeded the wall-clock budget.",
                         fallback_reason="budget_exhausted",
                     ),
@@ -328,7 +334,7 @@ async def run_case(
                     case_id,
                     StepIn(
                         kind="decision",
-                        actor=brain.model_id,
+                        actor=actor_override or brain.model_id,
                         rationale=action.rationale,
                         probability=action.probability,
                     ),
@@ -344,7 +350,7 @@ async def run_case(
                     case_id,
                     StepIn(
                         kind="decision",
-                        actor=brain.model_id,
+                        actor=actor_override or brain.model_id,
                         args=action.args if isinstance(action.args, dict) else {},
                         rationale=action.rationale,
                         probability=action.probability,
@@ -359,7 +365,7 @@ async def run_case(
                     case_id,
                     StepIn(
                         kind="decision",
-                        actor=brain.model_id,
+                        actor=actor_override or brain.model_id,
                         rationale="The exploration wall-clock budget was exhausted.",
                         fallback_reason="budget_exhausted",
                     ),
@@ -380,13 +386,15 @@ async def run_case(
             case_id,
             StepIn(
                 kind="decision",
-                actor="policy",
+                actor=actor_override or "policy",
                 rationale="No reasoning brain is configured; deterministic policy completion will continue.",
                 fallback_reason="brain_unavailable",
             ),
         )
 
-    policy_actor = "playbook" if req.mode == "playbook" else "policy"
+    policy_actor = actor_override or (
+        "playbook" if req.mode == "playbook" else "policy"
+    )
     for name, args in MANDATORY(req):
         key = (name, canonical_json(args))
         if key in called:
@@ -531,7 +539,7 @@ async def run_case(
                 case_id,
                 StepIn(
                     kind="decision",
-                    actor=brain.model_id,
+                    actor=actor_override or brain.model_id,
                     rationale="The model-call budget was exhausted before proposal.",
                     fallback_reason="budget_exhausted",
                 ),
@@ -557,7 +565,7 @@ async def run_case(
                     case_id,
                     StepIn(
                         kind="decision",
-                        actor=brain.model_id,
+                        actor=actor_override or brain.model_id,
                         rationale=str(exc),
                         fallback_reason="brain_unavailable",
                     ),
@@ -567,7 +575,7 @@ async def run_case(
                     case_id,
                     StepIn(
                         kind="decision",
-                        actor=brain.model_id,
+                        actor=actor_override or brain.model_id,
                         rationale="The reasoning model could not produce a valid proposal within budget.",
                         fallback_reason="brain_unavailable",
                     ),
@@ -575,7 +583,11 @@ async def run_case(
 
     proposal_overridden = proposal is not None and proposal.disposition != auth.disposition
     if proposal is not None:
-        proposal_actor = brain.model_id if brain is not None and req.mode == "agent" else "playbook"
+        proposal_actor = actor_override or (
+            brain.model_id
+            if brain is not None and req.mode == "agent"
+            else "playbook"
+        )
         cases.append_step(
             case_id,
             StepIn(
@@ -593,7 +605,7 @@ async def run_case(
         case_id,
         StepIn(
             kind="authorise",
-            actor="policy",
+            actor=actor_override or "policy",
             args={"disposition": auth.disposition},
             evidence_keys=sorted(
                 {key for reason in auth.reasons for key in reason.evidence_keys}
@@ -611,7 +623,8 @@ async def run_case(
         max_hops=req.max_hops,
         rulepacks=list(req.rulepacks),
         mode=req.mode,
-        actor_model=(
+        actor_model=actor_override
+        or (
             brain.model_id
             if brain is not None and req.mode == "agent"
             else ("playbook" if req.mode == "playbook" else "policy")
