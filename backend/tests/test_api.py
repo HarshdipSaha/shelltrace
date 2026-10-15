@@ -18,7 +18,9 @@ from shelltrace.api import create_app
 @pytest.fixture(scope="module")
 def api_bundle(store):
     workspace = f"api_{uuid4().hex[:8]}"
-    store.provision(workspace, seeder=load_synthetic, force_seed=True)
+    # Use ordinary provisioning so this first test also seeds the shared template
+    # graph before the event route exercises template-wide designation propagation.
+    store.provision(workspace, seeder=load_synthetic)
     settings = replace(
         get_settings(),
         default_workspace=workspace,
