@@ -21,20 +21,27 @@ function App() {
   const [service, setService] = useState({ loading: true, health: null, error: '' });
   const [selected, setSelected] = useState(null);
   const caseRequestId = useRef(0);
+  const healthRequestId = useRef(0);
+
+  const checkHealth = useCallback(async () => {
+    const requestId = ++healthRequestId.current;
+    setService((current) => ({ ...current, loading: true, error: '' }));
+    try {
+      const data = await health();
+      if (healthRequestId.current === requestId) {
+        setService({ loading: false, health: data, error: '' });
+      }
+    } catch (reason) {
+      if (healthRequestId.current === requestId) {
+        setService({ loading: false, health: null, error: reason.message });
+      }
+    }
+  }, []);
 
   useEffect(() => {
-    let active = true;
-    health()
-      .then((data) => {
-        if (!active) return;
-        setService({ loading: false, health: data, error: '' });
-      })
-      .catch((reason) => {
-        if (!active) return;
-        setService({ loading: false, health: null, error: reason.message });
-      });
-    return () => { active = false; };
-  }, []);
+    checkHealth();
+    return () => { healthRequestId.current += 1; };
+  }, [checkHealth]);
 
   const updateForm = useCallback((updates) => {
     caseRequestId.current += 1;
@@ -139,6 +146,8 @@ function App() {
           <SearchPanel
             workspace={form.workspace}
             health={service.health}
+            healthLoading={service.loading}
+            healthError={service.error}
             entity={entity}
             asOf={form.asOf}
             maxHops={form.maxHops}
@@ -148,6 +157,7 @@ function App() {
             onSelectEntity={selectEntity}
             onChange={updateForm}
             onRun={() => runCase()}
+            onRetryHealth={checkHealth}
           />
           <Timeline result={result} selected={selected} onSelect={setSelected} />
         </aside>

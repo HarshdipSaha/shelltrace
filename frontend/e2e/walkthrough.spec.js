@@ -99,3 +99,30 @@ test('late health response does not change the mode of an active case', async ({
   releaseCaseRequest();
   await expect(page.getByTestId('validated-badge')).toHaveText(/EXPOSED/);
 });
+
+test('failed health check offers an accurate retry before agent mode is enabled', async ({ page }) => {
+  let shouldFail = true;
+  await page.route('**/api/health', async (route) => {
+    if (shouldFail) {
+      await route.fulfill({
+        status: 503,
+        contentType: 'application/json',
+        body: JSON.stringify({ detail: 'health check unavailable' }),
+      });
+      return;
+    }
+    await route.fulfill({
+      json: { status: 'ok', graph: 'st_facts_synthetic', llm: 'claude-opus-5', node_count: 1 },
+    });
+  });
+
+  await page.goto('/');
+  await expect(page.getByText('API 503: health check unavailable')).toBeVisible();
+  await expect(page.getByText(/could not confirm model availability/i)).toBeVisible();
+  await expect(page.getByText(/confirming model availability/i)).toHaveCount(0);
+  await expect(page.getByRole('radio', { name: /Agent/ })).toBeDisabled();
+  shouldFail = false;
+  await page.getByRole('button', { name: 'Retry status check' }).click();
+  await expect(page.getByRole('radio', { name: /Agent/ })).toBeEnabled();
+  await expect(page.getByText('API 503: health check unavailable')).toHaveCount(0);
+});

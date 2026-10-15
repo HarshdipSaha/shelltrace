@@ -102,6 +102,8 @@ h1, h2, h3, p { margin-top: 0; }
 .mode-choice strong { color: #344e5e; font-size: 9px; }
 .mode-choice small { color: #80919c; font-size: 8px; white-space: nowrap; }
 .mode-note, .form-note { color: #87969e; font-size: 9px; line-height: 1.5; margin: 7px 0 0; }
+.mode-note--retry button { display: block; border: 0; padding: 2px 0 0; color: var(--teal); font: inherit; font-weight: 700; background: transparent; cursor: pointer; }
+.mode-note--retry button:disabled { cursor: wait; opacity: .65; }
 .run-button { width: 100%; min-height: 39px; display: flex; align-items: center; justify-content: center; gap: 9px; margin-top: 18px; border: 0; border-radius: 5px; color: #fff; background: #167f79; box-shadow: 0 3px 7px rgba(20,139,131,.17); font-size: 11px; font-weight: 700; transition: background .15s, transform .15s; }
 .run-button:hover:not(:disabled) { background: #0e6d68; transform: translateY(-1px); }
 .run-button:disabled { cursor: not-allowed; opacity: .52; box-shadow: none; }

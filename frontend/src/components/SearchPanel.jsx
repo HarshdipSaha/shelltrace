@@ -6,6 +6,8 @@ const PACKS = ['OFAC', 'EU', 'UK'];
 function SearchPanel({
   workspace,
   health,
+  healthLoading,
+  healthError,
   entity,
   asOf,
   maxHops,
@@ -15,6 +17,7 @@ function SearchPanel({
   onSelectEntity,
   onChange,
   onRun,
+  onRetryHealth,
 }) {
   const [query, setQuery] = useState(entity?.name || '');
   const [hits, setHits] = useState([]);
@@ -78,7 +81,9 @@ function SearchPanel({
   };
 
   const agentUnavailable = health?.llm === 'deterministic';
-  const agentChecking = !health;
+  const agentChecking = healthLoading;
+  const agentStatusUnknown = Boolean(healthError) && !healthLoading;
+  const agentDisabled = agentUnavailable || agentChecking || agentStatusUnknown;
 
   return (
     <section className="search-panel panel" aria-labelledby="search-title">
@@ -175,13 +180,13 @@ function SearchPanel({
       <fieldset className="choice-fieldset mode-fieldset">
         <legend>Investigation mode</legend>
         <div className="mode-choices" role="group" aria-label="Investigation mode">
-          <label className={`mode-choice ${mode === 'agent' ? 'mode-choice--active' : ''} ${agentUnavailable ? 'mode-choice--disabled' : ''}`}>
+          <label className={`mode-choice ${mode === 'agent' ? 'mode-choice--active' : ''} ${agentDisabled ? 'mode-choice--disabled' : ''}`}>
             <input
               type="radio"
               name="mode"
               value="agent"
               checked={mode === 'agent'}
-              disabled={agentUnavailable || agentChecking || loading}
+              disabled={agentDisabled || loading}
               onChange={() => onChange({ mode: 'agent' })}
             />
             <span><strong>Agent</strong><small>Claude-assisted</small></span>
@@ -200,6 +205,12 @@ function SearchPanel({
         </div>
         {agentUnavailable && <p className="mode-note">Agent mode is unavailable without a configured model key.</p>}
         {agentChecking && <p className="mode-note">Confirming model availability; playbook mode remains ready.</p>}
+        {agentStatusUnknown && (
+          <p className="mode-note mode-note--retry">
+            Could not confirm model availability. Playbook mode remains ready.
+            <button type="button" disabled={loading} onClick={onRetryHealth}>Retry status check</button>
+          </p>
+        )}
       </fieldset>
 
       <button className="run-button" type="button" disabled={loading || !entity || !packs.length} onClick={onRun}>
