@@ -12,6 +12,7 @@ from ..schema import ensure_schema
 
 SRC, SNAP, LIC = "synthetic", "synthetic-v1", "CC0-1.0 (synthetic, disclosed)"
 SYNTHETIC_ACCEPTED_AT = "2026-10-15T00:00:00Z"
+SYNTHETIC_DESIGNATION_REASON = "Synthetic designation fixture"
 PROGS = [
     ("prog_ofac", "OFAC", "OFAC SDN (synthetic)"),
     ("prog_eu", "EU", "EU Consolidated (synthetic)"),
@@ -255,6 +256,7 @@ def load_synthetic(g) -> dict:
             "k": f"syn:{record}",
             "listed_on": listed_on,
             "delisted_on": delisted_on,
+            "reason": SYNTHETIC_DESIGNATION_REASON,
             "src": SRC,
             "src_record": record,
             "snapshot": SNAP,
@@ -263,7 +265,7 @@ def load_synthetic(g) -> dict:
     rw(
         g,
         "UNWIND $rows AS r MATCH (e:Entity {id:r.entity_id}),(p:Program {id:r.program_id}) "
-        "MERGE (e)-[d:DESIGNATED {k:r.k}]->(p) SET d.listed_on=r.listed_on, d.delisted_on=r.delisted_on, "
+        "MERGE (e)-[d:DESIGNATED {k:r.k}]->(p) SET d.listed_on=r.listed_on, d.delisted_on=r.delisted_on, d.reason=r.reason, "
         "d.src=r.src, d.src_record=r.src_record, d.snapshot=r.snapshot, d.licence=r.licence",
         {"rows": designation_rows},
     )

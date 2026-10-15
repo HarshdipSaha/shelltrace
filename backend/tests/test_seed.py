@@ -51,6 +51,18 @@ def test_seed_has_exact_golden_ids_and_evidence_keys(store, golden_ws):
     assert ro(graph, "MATCH ()-[r:DESIGNATED {k:'syn:D-p_volkov-prog_ofac'}]->() RETURN count(r) AS n")[0]["n"] == 1
 
 
+def test_every_synthetic_designation_has_disclosed_reason(store, golden_ws):
+    graph = store.workspace(golden_ws)
+    result = ro(
+        graph,
+        "MATCH ()-[r:DESIGNATED]->() "
+        "RETURN count(r) AS total, count(r.reason) AS with_reason, collect(DISTINCT r.reason) AS reasons",
+    )[0]
+    assert result["total"] == 23
+    assert result["with_reason"] == result["total"]
+    assert result["reasons"] == ["Synthetic designation fixture"]
+
+
 def test_seed_control_ground_uses_controls_basis(store, golden_ws):
     graph = store.workspace(golden_ws)
     edge = ro(graph, "MATCH ()-[r:CONTROLS {k:'syn:G13-1'}]->() RETURN r.basis AS basis, r.control AS control")[0]
