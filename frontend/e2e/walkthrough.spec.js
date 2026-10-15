@@ -178,7 +178,17 @@ test('selecting a graph proof edge opens its evidence in the locker', async ({ p
   await page.getByRole('option', { name: /Nord Harbor Logistics/ }).click();
   await page.getByRole('button', { name: 'Run investigation' }).click();
   await expect(page.getByTestId('validated-badge')).toHaveText(/EXPOSED/, { timeout: 15_000 });
-  await page.getByRole('button', { name: 'Select evidence syn:G1-2' }).click();
+
+  const graph = page.getByTestId('evidence-graph-canvas');
+  await graph.scrollIntoViewIfNeeded();
+  const edgePoint = await graph.evaluate((container, edgeId) => {
+    const edge = container._cyreg?.cy?.getElementById(edgeId);
+    if (!edge || edge.empty()) throw new Error(`Graph edge ${edgeId} was not rendered`);
+    const point = edge.renderedMidpoint();
+    const bounds = container.getBoundingClientRect();
+    return { x: bounds.left + point.x, y: bounds.top + point.y };
+  }, 'syn:G1-2');
+  await page.mouse.click(edgePoint.x, edgePoint.y);
 
   const locker = page.getByRole('region', { name: 'Evidence locker' });
   await expect(locker).toContainText('syn:G1-2');
