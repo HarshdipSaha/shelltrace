@@ -193,9 +193,12 @@ class ClaudeBrain:
         return Proposal.model_validate_json(text)
 
 
-def make_brain(settings) -> ClaudeBrain | None:
+def make_brain(settings):
     if not settings.llm_enabled:
         return None
+    if settings.llm_provider == "groq":
+        from .groq_brain import make_groq_brain
+        return make_groq_brain(settings)
     return ClaudeBrain(
         settings.llm_model,
         anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key),

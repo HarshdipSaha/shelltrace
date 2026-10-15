@@ -168,9 +168,9 @@ The demo runs on two graphs:
   - **Frontend:** React and Vite with Cytoscape.js, using dagre layout and expand-collapse for alias clusters.
   - **Deployment:** one container serves the API, the MCP endpoint and the built UI. FalkorDB runs on Docker locally and on FalkorDB Cloud for the live deployment.
 - The model layer is optional and replaceable.
-  - **Default model:** Anthropic Claude (`claude-opus-5`; the model ID is configurable) with server-side refusal fallbacks enabled.
+  - **Default live model (approved 2026-10-15 amendment, #35):** Groq `openai/gpt-oss-120b` (configurable), behind the existing Brain contract with bounded retries and deterministic playbook fallback. Explicit legacy Claude configuration remains available.
   - **Without a key:** the deterministic playbook runs instead.
-  - **TypeSafe Jev:** an optional alias adjudicator behind the same judge interface. Jev is the model; Choice, Score and Noul are its primitives. Its documented weaknesses (dates, multi-hop, numbers, option order) keep it off every decision except alias pairs ([R1](research/R1-hackathon-intel.md)).
+  - **TypeSafe Jev:** an optional read-only alias recommendation for existing pending pairs after deterministic identifier checks; it never merges records or changes a disposition. Typed Choice returns same_entity, different_entity or uncertain with confidence and probabilities. Jev is the model; Choice, Score and Noul are its primitives. Its documented weaknesses (dates, multi-hop, numbers, option order) keep it off every decision except alias pairs ([R1](research/R1-hackathon-intel.md)).
 
 ### Graph data model (FalkorDB)
 - **Graphs:**
