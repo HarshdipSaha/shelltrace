@@ -174,6 +174,7 @@ def _trace_node(graph, entity_id: str) -> tuple[str, TraceNode]:
 def _view(req, steps_left, calls_left, calls):
     return {
         "case": {
+            "workspace": req.workspace,
             "entity_id": req.entity_id,
             "as_of": req.as_of,
             "rulepacks": list(req.rulepacks),

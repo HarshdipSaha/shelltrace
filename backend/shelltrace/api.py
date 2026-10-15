@@ -18,6 +18,7 @@ from .config import Settings, get_settings
 from .db import GraphStore, WorkspaceNameError, ro
 from .events import process_designation
 from .graph import aliases, evidence
+from .graph.alias_judge import AliasJudgement, JevAliasJudge
 from .graph.aliases import ClusterTooLarge, IdentifierConflict, MergeNeedsConfirmation
 from .graph.ownership import EntityNotFound
 from .memory.cases import CaseStore, FourEyesRequired
@@ -29,6 +30,11 @@ from .seed.synthetic import load_synthetic
 
 class WatchIn(Strict):
     active: bool
+
+
+class AliasJudgeIn(Strict):
+    a_id: str = Field(min_length=1, max_length=80)
+    b_id: str = Field(min_length=1, max_length=80)
 
 
 class AliasDecisionIn(Strict):
@@ -148,6 +154,8 @@ def create_app(
                 "graph": graph_name,
                 "llm": settings.llm_model if settings.llm_enabled else "deterministic",
                 "node_count": 0,
+                "llm_provider": settings.llm_provider if settings.llm_enabled else "none",
+                "alias_judge": settings.jev_model if settings.jev_enabled and settings.jev_api_key else "disabled",
             }
         rows = ro(store.template(), "MATCH (n) RETURN count(n) AS node_count")
         return {
@@ -155,7 +163,36 @@ def create_app(
             "graph": graph_name,
             "llm": settings.llm_model if settings.llm_enabled else "deterministic",
             "node_count": rows[0]["node_count"] if rows else 0,
+            "llm_provider": settings.llm_provider if settings.llm_enabled else "none",
+            "alias_judge": settings.jev_model if settings.jev_enabled and settings.jev_api_key else "disabled",
         }
+
+    @app.post("/api/aliases/judge")
+    async def judge_alias(pair: AliasJudgeIn, workspace: str):
+        # This advisory endpoint never provisions workspaces or writes graph state.
+        if workspace not in store.workspaces():
+            raise HTTPException(status_code=404, detail="workspace not found")
+        graph = store.workspace(workspace)
+        rows = ro(
+            graph,
+            "MATCH (a:Entity {id:$a})-[c:CANDIDATE_SAME_AS]-(b:Entity {id:$b}) "
+            "WHERE c.state='pending' RETURN properties(a) AS a, properties(b) AS b LIMIT 1",
+            {"a": pair.a_id, "b": pair.b_id},
+        )
+        if not rows:
+            raise HTTPException(status_code=404, detail="pending alias candidate not found")
+        members = []
+        for entity in (rows[0]["a"], rows[0]["b"]):
+            members.append(ro(graph, "MATCH (e:Entity) WHERE e.canon=$canon OR e.id=$id RETURN properties(e) AS e LIMIT 26", {"canon": entity.get("canon", entity["id"]), "id": entity["id"]}))
+        if any(len(group) > aliases.MAX_CLUSTER for group in members):
+            return AliasJudgement(reason="cluster_size_limit")
+        for left in members[0]:
+            for right in members[1]:
+                _, _, reason = aliases.score_pair(left["e"], right["e"])
+                if reason.startswith("identifier_conflict:"):
+                    return AliasJudgement("different_entity", "deterministic", reason)
+        judge = JevAliasJudge(settings.jev_api_key if settings.jev_enabled else None, settings.jev_model, timeout_s=settings.jev_timeout_s)
+        return await judge.judge(rows[0]["a"], rows[0]["b"])
 
     @app.get("/api/entities/search")
     def search_entities(
