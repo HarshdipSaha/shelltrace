@@ -155,6 +155,24 @@ def test_crosses_uses_exact_inclusive_and_strict_legal_thresholds():
     assert crosses(50.0 + EPS / 2, UK)
 
 
+def test_uk_decisive_edges_are_scoped_to_groups_where_target_is_possible():
+    graph = G(
+        owns=[
+            ("s1-u", "S1", "U", None),
+            ("u-t-small", "U", "T", 10.0),
+            ("s2-v", "S2", "V", None),
+            ("v-t", "V", "T", 60.0),
+        ],
+        seeds={"S1": ("dS1",), "S2": ("dS2",)},
+    )
+
+    result = ref_evaluate("T", graph, UK)
+
+    assert result.verdict == "INDETERMINATE"
+    assert "u-t-small" not in result.decisive
+    assert {"s2-v", "v-t"} <= result.decisive
+
+
 def test_uk_control_presumptions_include_each_designated_seed_group():
     graph = G(
         owns=[("e1", "P", "A", 10.0)],

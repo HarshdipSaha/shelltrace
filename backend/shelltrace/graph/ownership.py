@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from collections import defaultdict
 from typing import Any
 
 from ..db import ro
@@ -72,10 +73,11 @@ WITH c, sum(p) AS s WHERE s > 100.000000001
 RETURN c"""
 
 ECON = f"""
-MATCH p=(o:Entity)-[:OWNS*1..6]->(t:Entity {{id:$id}})
-WHERE o.canon IN $seeds
-  AND all(r IN relationships(p) WHERE r.pct IS NOT NULL AND NOT r.k IN $exclude AND {VALID})
-RETURN reduce(x = 1.0, r IN relationships(p) | x * r.pct / 100.0) AS share"""
+MATCH (o:Entity)-[r:OWNS]->(x:Entity)
+WHERE o.canon IN $scope AND x.canon IN $scope AND r.pct IS NOT NULL
+  AND NOT r.k IN $exclude AND {VALID}
+WITH o.canon AS owner, x.canon AS asset, max(r.pct) AS pct
+RETURN owner, asset, pct"""
 
 
 def _ctx(as_of: str, exclude: tuple[str, ...], ignore_time: bool) -> dict[str, Any]:
@@ -273,14 +275,35 @@ def _data_errors(g, scope: list[str], context: dict[str, Any]) -> list[str]:
 
 def _economic_exposure(
     g,
-    entity_id: str,
+    target: str,
+    scope: list[str],
     seeds: list[str],
     context: dict[str, Any],
+    max_hops: int,
 ) -> float | None:
     if not seeds:
         return None
-    rows = ro(g, ECON, {**context, "id": entity_id, "seeds": seeds})
-    return sum(float(row["share"]) for row in rows)
+    rows = ro(g, ECON, {**context, "scope": scope})
+    adjacency: dict[str, list[tuple[str, float]]] = defaultdict(list)
+    for row in rows:
+        adjacency[row["owner"]].append((row["asset"], float(row["pct"]) / 100.0))
+
+    exposure = 0.0
+    for seed in seeds:
+        pending = [(seed, 1.0, 0, frozenset({seed}))]
+        while pending:
+            owner, share, hops, visited = pending.pop()
+            if hops >= max_hops:
+                continue
+            for asset, pct in adjacency.get(owner, ()):
+                if asset in visited:
+                    continue
+                path_share = share * pct
+                if asset == target:
+                    exposure += path_share
+                else:
+                    pending.append((asset, path_share, hops + 1, visited | {asset}))
+    return exposure
 
 
 def _result(
@@ -365,6 +388,21 @@ def evaluate(
 
     if canon in seeds:
         proof = sorted(seeds[canon])
+        decisive: list[str] = []
+        if counterfactuals:
+            for key in proof[:20]:
+                alternate = evaluate(
+                    g,
+                    entity_id,
+                    as_of,
+                    pack,
+                    max_hops=effective_hops,
+                    exclude=tuple(sorted(set(exclude) | {key})),
+                    ignore_time=ignore_time,
+                    counterfactuals=False,
+                )
+                if alternate.verdict != "BLOCKED":
+                    decisive.append(key)
         elapsed = int((time.perf_counter() - started) * 1000)
         return _result(
             pack=pack,
@@ -376,15 +414,17 @@ def evaluate(
             lo=100.0,
             hi=100.0,
             proof=proof,
-            decisive=[],
-            decisive_kind="none",
+            decisive=decisive,
+            decisive_kind="counterfactual" if decisive else "none",
             presumptions=set(),
             seeds=[canon],
             scope=scope,
             truncated=truncated,
             data_errors=errors,
             caveats=[],
-            economic_exposure=_economic_exposure(g, entity_id, all_seed_canons, context),
+            economic_exposure=_economic_exposure(
+                g, canon, scope, all_seed_canons, context, effective_hops
+            ),
             rounds=0,
             latency_ms=elapsed,
         )
@@ -399,6 +439,7 @@ def evaluate(
     best: tuple[float, set[str], dict[str, list[str]], set[str]] | None = None
     possible: set[str] = set()
     definite_groups: list[set[str]] = []
+    possible_groups: list[set[str]] = []
     upper_target = 0.0
     rounds = 0
     for group in seed_groups:
@@ -409,6 +450,7 @@ def evaluate(
             g, scope, group, pack, context, upper=True
         )
         definite_groups.append(definite)
+        possible_groups.append(maybe)
         lower_target, _ = _target_share(g, canon, definite, scope, pack, context)
         _, high_target = _target_share(g, canon, maybe, scope, pack, context)
         possible.update(maybe)
@@ -436,21 +478,25 @@ def evaluate(
         decisive = []
         decisive_kind = "none"
     elif canon in possible:
-        undecided = (possible - definite) | {canon}
-        rows = ro(
-            g,
-            DECISIVE,
-            {
-                **context,
-                "undecided": sorted(undecided),
-                "possible": sorted(possible),
-                "basis": list(pack.basis_accepted),
-                "definite": sorted(definite),
-            },
-        )
+        decisive_keys: set[str] = set()
+        for group_definite, group_possible in zip(definite_groups, possible_groups):
+            if canon not in group_possible or canon in group_definite:
+                continue
+            rows = ro(
+                g,
+                DECISIVE,
+                {
+                    **context,
+                    "undecided": sorted((group_possible - group_definite) | {canon}),
+                    "possible": sorted(group_possible),
+                    "basis": list(pack.basis_accepted),
+                    "definite": sorted(group_definite),
+                },
+            )
+            decisive_keys.update(row["k"] for row in rows)
         proof_keys, caveats = [], []
         verdict = "INDETERMINATE"
-        decisive = sorted({row["k"] for row in rows})
+        decisive = sorted(decisive_keys)
         decisive_kind = "unknown_or_conflict"
     elif canon in presumed:
         proof_keys, caveats = [], []
@@ -500,7 +546,9 @@ def evaluate(
         truncated=truncated,
         data_errors=errors,
         caveats=caveats,
-        economic_exposure=_economic_exposure(g, entity_id, all_seed_canons, context),
+        economic_exposure=_economic_exposure(
+            g, canon, scope, all_seed_canons, context, effective_hops
+        ),
         rounds=rounds,
         latency_ms=elapsed,
     )

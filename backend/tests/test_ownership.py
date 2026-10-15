@@ -109,6 +109,37 @@ def test_accepted_aliases_resolve_to_one_canonical_entity(store, golden_ws):
     assert canon_of(graph, "c_bluelagoon") == canon_of(graph, "c_bluelagoon_alias")
 
 
+def test_economic_exposure_resolves_accepted_alias_endpoints(store, golden_ws):
+    graph = store.workspace(golden_ws)
+
+    canonical = evaluate(graph, "c_bluelagoon", "2024-01-01", OFAC)
+    alias = evaluate(graph, "c_bluelagoon_alias", "2024-01-01", OFAC)
+
+    assert canonical.economic_exposure == 0.8
+    assert alias.economic_exposure == 0.8
+
+
+def test_economic_exposure_counts_duplicate_holding_once(store, golden_ws):
+    result = evaluate(store.workspace(golden_ws), "c_nimbus", "2024-01-01", OFAC)
+
+    assert result.economic_exposure == 0.6
+
+
+def test_direct_designation_counterfactual_marks_its_designation(store, golden_ws):
+    result = evaluate(
+        store.workspace(golden_ws),
+        "p_volkov",
+        "2024-01-01",
+        OFAC,
+        counterfactuals=True,
+    )
+
+    assert result.verdict == "BLOCKED"
+    assert result.proof == ["syn:D-p_volkov-prog_ofac"]
+    assert result.decisive == ["syn:D-p_volkov-prog_ofac"]
+    assert result.decisive_kind == "counterfactual"
+
+
 def test_hop_bound_limits_the_upstream_scope(store, golden_ws):
     graph = store.workspace(golden_ws)
     canon = canon_of(graph, "c_nordharbor")

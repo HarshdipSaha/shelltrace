@@ -180,12 +180,14 @@ def ref_evaluate(target: str, graph: RefGraph, pack: RulePack) -> RefResult:
     best: tuple[float, set[str], dict[str, list[str]], set[str]] | None = None
     possible: set[str] = set()
     definite_groups: list[set[str]] = []
+    possible_groups: list[set[str]] = []
     upper_target = 0.0
     rounds = 0
     for group in seed_groups:
         definite, proof, definite_rounds = _fixpoint(group, pairs, pack, upper=False)
         maybe, _, possible_rounds = _fixpoint(group, pairs, pack, upper=True)
         definite_groups.append(definite)
+        possible_groups.append(maybe)
         lower_target = _share(target, definite, pairs)[0]
         high_target = _share(target, maybe, pairs)[1]
         possible.update(maybe)
@@ -220,15 +222,23 @@ def ref_evaluate(target: str, graph: RefGraph, pack: RulePack) -> RefResult:
         )
 
     if target in possible:
-        undecided = (possible - definite) | {target}
-        decisive = {
-            key
-            for asset in undecided
-            for owner, holding in pairs.get(asset, {}).items()
-            if owner in possible
-            and (holding.pmax is None or holding.pmin != holding.pmax or owner not in definite)
-            for key in holding.keys
-        }
+        decisive: set[str] = set()
+        for group_definite, group_possible in zip(definite_groups, possible_groups):
+            if target not in group_possible or target in group_definite:
+                continue
+            undecided = (group_possible - group_definite) | {target}
+            decisive.update(
+                key
+                for asset in undecided
+                for owner, holding in pairs.get(asset, {}).items()
+                if owner in group_possible
+                and (
+                    holding.pmax is None
+                    or holding.pmin != holding.pmax
+                    or owner not in group_definite
+                )
+                for key in holding.keys
+            )
         return RefResult(
             "INDETERMINATE",
             lower_target,
