@@ -24,6 +24,7 @@ WHERE o.canon IN $scope AND x.canon IN $scope
   AND (r.valid_from IS NULL OR r.valid_from <= $as_of)
   AND (r.valid_to IS NULL OR r.valid_to >= $as_of)
 RETURN o.id AS owner, o.canon AS owner_canon, x.id AS asset, x.canon AS asset_canon, r.k AS k
+LIMIT $row_limit
 """
 
 MASS_ADDRESSES = """
@@ -61,6 +62,11 @@ RETURN o.id AS controller, x.id AS controlled, type(r) AS rel_type,
 """
 
 MASS_EVIDENCE_BUDGET = 50
+CYCLE_EDGE_BUDGET = 5_000
+
+
+class RedFlagsUnavailable(RuntimeError):
+    """The red-flag analysis could not be completed within its safety bounds."""
 
 
 def _valid_date(value: str) -> str:
@@ -172,7 +178,20 @@ def red_flags(
                 )
             )
 
-    cycle_rows = ro(g, CYCLE_EDGES, {"scope": scope, "as_of": as_of})
+    cycle_rows = ro(
+        g,
+        CYCLE_EDGES,
+        {
+            "scope": scope,
+            "as_of": as_of,
+            "row_limit": CYCLE_EDGE_BUDGET + 1,
+        },
+    )
+    if len(cycle_rows) > CYCLE_EDGE_BUDGET:
+        raise RedFlagsUnavailable(
+            "ownership-cycle analysis unavailable: row limit "
+            f"({CYCLE_EDGE_BUDGET}) exceeded."
+        )
     cycles = _cycles(cycle_rows)
 
     for entity_ids, keys in cycles:
@@ -250,7 +269,17 @@ def red_flags(
         )
 
     unique: dict[tuple[str, tuple[str, ...]], RedFlag] = {}
+    unkeyed_mass_flags: list[RedFlag] = []
     for flag in flags:
         evidence = tuple(sorted(flag.evidence_keys))
-        unique[(flag.kind, evidence)] = flag.model_copy(update={"evidence_keys": list(evidence)})
-    return sorted(unique.values(), key=lambda flag: (flag.kind, tuple(flag.evidence_keys)))
+        normalized = flag.model_copy(update={"evidence_keys": list(evidence)})
+        if flag.kind == "mass_registration_address" and not evidence:
+            # MASS_ADDRESSES returns one row per address. Preserve each result
+            # when a failed sample leaves no key that can distinguish addresses.
+            unkeyed_mass_flags.append(normalized)
+            continue
+        unique[(flag.kind, evidence)] = normalized
+    return sorted(
+        [*unique.values(), *unkeyed_mass_flags],
+        key=lambda flag: (flag.kind, tuple(flag.evidence_keys), flag.detail),
+    )

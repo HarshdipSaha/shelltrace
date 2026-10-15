@@ -1607,7 +1607,7 @@ def test_search_finds_alias_spellings(store, golden_ws):
 
 - [x] **Step 2: Run them to verify they fail** → FAIL
 
-- [x] **Step 3: Implement `redflags.py`.** Each check runs on `scope, _ = upstream_scope(g, canon_of(g, entity_id), as_of, max_hops)`. Detect ownership cycles by fetching valid `OWNS` edges whose canonical endpoints are both in `scope`, then running Tarjan SCC over canonical endpoints. This captures alias-split cycles and cycles longer than six edges while keeping the graph query bounded to the scope. Divestment and designated-control checks join designation records by canonical subject but retain the original designation edge key as evidence. Mass-address counts cover all currently registered entities; return at most 50 registration evidence keys per address and set `RedFlag.evidence_status` (`complete`, `truncated`, or `unavailable`), `entity_count`, and `evidence_count` so callers can distinguish sampled or unavailable evidence from the full entity and evidence counts. Deduplicate flags by `(kind, tuple(sorted(evidence_keys)))`.
+- [x] **Step 3: Implement `redflags.py`.** Each check runs on `scope, _ = upstream_scope(g, canon_of(g, entity_id), as_of, max_hops)`. Detect ownership cycles by fetching valid `OWNS` edges whose canonical endpoints are both in `scope`, then running Tarjan SCC over canonical endpoints. This captures alias-split cycles and cycles longer than six edges. Bound the raw cycle-edge query at 5,001 rows; if more than 5,000 are returned, raise `RedFlagsUnavailable` instead of returning a potentially incomplete clear result. Divestment and designated-control checks join designation records by canonical subject but retain the original designation edge key as evidence. Mass-address counts cover all currently registered entities; return at most 50 registration evidence keys per address and set `RedFlag.evidence_status` (`complete`, `truncated`, or `unavailable`), `entity_count`, and `evidence_count` so callers can distinguish sampled or unavailable evidence from the full entity and evidence counts. Deduplicate flags by `(kind, tuple(sorted(evidence_keys)))`; when mass-address evidence is unavailable and keys are empty, preserve each address result because its fingerprint cannot distinguish addresses.
 
 ```python
 DIVEST = """
@@ -1626,7 +1626,8 @@ WHERE o.canon IN $scope AND x.canon IN $scope
   AND (r.valid_from IS NULL OR r.valid_from <= $as_of)
   AND (r.valid_to IS NULL OR r.valid_to >= $as_of)
 RETURN o.id AS owner, o.canon AS owner_canon, x.id AS asset,
-       x.canon AS asset_canon, r.k AS k"""
+       x.canon AS asset_canon, r.k AS k
+LIMIT $row_limit"""
 ```
 
 Tarjan SCC uses the returned canonical edge list and collects all internal edge keys and physical entity IDs for each component.

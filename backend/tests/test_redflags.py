@@ -6,7 +6,7 @@ import pytest
 from shelltrace.db import rw
 from shelltrace.graph.ownership import EntityNotFound
 from shelltrace.graph import redflags as redflags_module
-from shelltrace.graph.redflags import red_flags
+from shelltrace.graph.redflags import RedFlagsUnavailable, red_flags
 
 
 ALL = ("OFAC", "EU", "UK")
@@ -169,6 +169,31 @@ def test_seven_node_cycle_fits_the_six_hop_scope(store):
     assert set(cycle.evidence_keys) == {f"test:ring-{i}" for i in range(7)}
 
 
+def test_cycle_edge_budget_overflow_is_unavailable(store, monkeypatch):
+    monkeypatch.setattr(redflags_module, "CYCLE_EDGE_BUDGET", 2, raising=False)
+    real_ro = redflags_module.ro
+    cycle_params = {}
+
+    def capture_cycle_query(graph, cypher, params=None):
+        if cypher == redflags_module.CYCLE_EDGES:
+            cycle_params.update(params or {})
+        return real_ro(graph, cypher, params)
+
+    monkeypatch.setattr(redflags_module, "ro", capture_cycle_query)
+    entities = [{"id": node, "canon": node} for node in "abc"]
+    owns = [
+        {"owner": "a", "asset": "b", "k": "test:a-b"},
+        {"owner": "b", "asset": "c", "k": "test:b-c"},
+        {"owner": "c", "asset": "a", "k": "test:c-a"},
+    ]
+
+    with custom_graph(store, entities, owns=owns) as graph:
+        with pytest.raises(RedFlagsUnavailable, match="cycle.*row limit.*exceeded"):
+            red_flags(graph, "a", "2024-01-01", 6, ALL)
+
+    assert cycle_params["row_limit"] == 3
+
+
 def test_cycles_outside_canonical_scope_are_ignored(store):
     entities = [{"id": node, "canon": node} for node in "abcd"]
     owns = [
@@ -227,16 +252,20 @@ def test_designated_control_joins_designation_by_canonical_subject(store):
     assert flag.entity_ids == ["controller_record", "asset"]
 
 
-def _mass_address_graph(store):
+def _mass_address_graph(store, address_ids=("shared",)):
     entities = [{"id": f"e{i}", "canon": f"e{i}"} for i in range(5)]
-    addresses = [{"id": "shared", "name": "Shared address"}]
+    addresses = [
+        {"id": address_id, "name": f"Shared address {address_id}"}
+        for address_id in address_ids
+    ]
     registrations = [
         {
             "entity": f"e{i}",
-            "address": "shared",
-            "k": f"test:registration-{i}-{version}",
+            "address": address_id,
+            "k": f"test:registration-{address_id}-{i}-{version}",
         }
         for i in range(5)
+        for address_id in address_ids
         for version in range(2)
     ]
     return custom_graph(
@@ -276,6 +305,26 @@ def test_mass_registration_evidence_failure_is_reported(store, monkeypatch):
     assert flag.entity_count == 5
     assert flag.evidence_count == 10
     assert flag.evidence_keys == []
+
+
+def test_distinct_mass_addresses_survive_empty_evidence_dedup(store, monkeypatch):
+    def fail_sample_query(graph, cypher, params=None):
+        if cypher == redflags_module.MASS_EVIDENCE:
+            raise RuntimeError("sample unavailable")
+        return real_ro(graph, cypher, params)
+
+    real_ro = redflags_module.ro
+    monkeypatch.setattr(redflags_module, "ro", fail_sample_query)
+    with _mass_address_graph(store, ("shared-a", "shared-b")) as graph:
+        flags = red_flags(graph, "e0", "2024-01-01", 6, ALL, mass_min=2)
+
+    mass_flags = [flag for flag in flags if flag.kind == "mass_registration_address"]
+    assert len(mass_flags) == 2
+    assert all(flag.evidence_status == "unavailable" for flag in mass_flags)
+    assert all(flag.evidence_keys == [] for flag in mass_flags)
+    assert {flag.detail.split("(")[-1].split(")")[0] for flag in mass_flags} == {
+        "shared-a", "shared-b"
+    }
 
 
 def test_red_flags_normalizes_as_of_dates(store):
