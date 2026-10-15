@@ -55,22 +55,29 @@ class _GuardedGraph:
     __slots__ = ("__graph", "__ensure_lock")
 
     def __init__(self, graph: Graph, ensure_lock: Callable[[], None]):
-        self.__graph = graph
-        self.__ensure_lock = ensure_lock
+        object.__setattr__(self, "_GuardedGraph__graph", graph)
+        object.__setattr__(self, "_GuardedGraph__ensure_lock", ensure_lock)
+
+    def __getattribute__(self, name: str):
+        if name in {"_GuardedGraph__graph", "_GuardedGraph__ensure_lock"}:
+            raise AttributeError(f"{name} is unavailable on a guarded graph")
+        return object.__getattribute__(self, name)
 
     def __getattr__(self, name: str):
         if name in {"client", "schema", "__dict__"} or name.startswith("_"):
             raise AttributeError(f"{name} is unavailable on a guarded graph")
 
-        attr = getattr(self.__graph, name)
+        graph = object.__getattribute__(self, "_GuardedGraph__graph")
+        ensure_lock = object.__getattribute__(self, "_GuardedGraph__ensure_lock")
+        attr = getattr(graph, name)
         if not callable(attr):
             return attr
 
         def guarded_call(*args, **kwargs):
-            self.__ensure_lock()
+            ensure_lock()
             result = attr(*args, **kwargs)
             if isinstance(result, Graph):
-                return _GuardedGraph(result, self.__ensure_lock)
+                return _GuardedGraph(result, ensure_lock)
             return result
 
         return guarded_call

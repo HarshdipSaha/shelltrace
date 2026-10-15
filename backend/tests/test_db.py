@@ -114,6 +114,7 @@ class _FakeRedis:
         self.copy_calls = []
         self.query_calls = []
         self.renewal_failures = {}
+        self.renewal_events = {}
 
     def _expire_locked(self, name):
         expires_at = self.expirations.get(name)
@@ -155,6 +156,9 @@ class _FakeRedis:
                     raise ConnectionError("injected transient renewal error")
                 if self.values.get(key) == token:
                     self.expirations[key] = monotonic() + int(ttl_ms) / 1000
+                    event = self.renewal_events.get(key)
+                    if event is not None:
+                        event.set()
                     return 1
                 return 0
             if "keys[2]" in script_lower:
@@ -509,19 +513,24 @@ def test_transient_template_renewal_error_recovers_before_lease_expiry(monkeypat
 
     monkeypatch.setattr(db, "_LOCK_TTL_MS", 100)
     connection = _FakeRedis()
-    connection.renewal_failures["shelltrace:graph-lock:st_facts_test"] = 1
+    template_lock_key = "shelltrace:graph-lock:st_facts_test"
+    connection.renewal_failures[template_lock_key] = 1
+    renewal_succeeded = Event()
+    connection.renewal_events[template_lock_key] = renewal_succeeded
     store = _fake_store(monkeypatch, connection)
     template_started = Event()
     finish_template = Event()
     template_attempts = 0
+    template_seed_started_at = None
     failures = []
 
     def seeder(graph):
-        nonlocal template_attempts
+        nonlocal template_attempts, template_seed_started_at
         if graph.name == "st_facts_test":
             template_attempts += 1
             with connection.lock:
                 connection.graphs[graph.name] = "partial"
+            template_seed_started_at = monotonic()
             template_started.set()
             if not finish_template.wait(timeout=5):
                 raise TimeoutError("template seed was not released")
@@ -537,7 +546,10 @@ def test_transient_template_renewal_error_recovers_before_lease_expiry(monkeypat
     first = Thread(target=provision, args=("t_renew_retry_a",))
     first.start()
     assert template_started.wait(timeout=2)
-    Event().wait(0.3)  # longer than the initial 100 ms lease
+    assert renewal_succeeded.wait(timeout=2), "heartbeat did not recover after the transient error"
+    remaining_seed_time = template_seed_started_at + 0.3 - monotonic()
+    if remaining_seed_time > 0:
+        Event().wait(remaining_seed_time)  # keep the seed active beyond the 100 ms TTL
     second = Thread(target=provision, args=("t_renew_retry_b",))
     second.start()
     second.join(timeout=2)
@@ -567,6 +579,8 @@ def test_replaced_lock_fences_next_seeder_write_and_ready_marker(monkeypatch):
     ready_key = f"shelltrace:graph-ready:{graph_name}"
 
     def seeder(graph):
+        with pytest.raises(AttributeError, match="unavailable on a guarded graph"):
+            getattr(graph, "_GuardedGraph__graph")
         graph.query("CREATE (:FirstWrite)")
         connection.set(lock_key, "replacement-token", px=300_000)
         graph.query("CREATE (:FencedWrite)")
