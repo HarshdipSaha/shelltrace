@@ -2191,6 +2191,8 @@ The brain sees a compact `view`. Entity names appear only inside `evidence_so_fa
 
 ### Task 13: The Claude brain
 
+> Approved 2026-10-15 amendment (#35): Groq `openai/gpt-oss-120b` is now the default live provider; the original Claude adapter remains for explicit legacy configuration. See [Groq and Jev plan](2026-10-15-groq-jev.md). Brain, runner, deterministic authorization and citation verification contracts remain in force.
+
 **Files:**
 - Create: `backend/shelltrace/agent/prompts.py`, `backend/shelltrace/agent/claude_brain.py`
 - Test: `backend/tests/test_claude_brain.py` (fake client, no network); `backend/tests/live/test_claude_live.py` (skipped unless `ANTHROPIC_API_KEY` is set)
