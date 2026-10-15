@@ -1393,7 +1393,7 @@ The `trace(...)` body:
 3. Put the `cypher` text and `latency_ms` on the result.
 
 - [x] **Step 4: Run the tests** → `pytest tests/test_trace.py -v` → 9 passed
-- [ ] **Step 5: Commit** → `git commit -m "feat: dated, alias-aware exposure trace (ownership and context modes)"`
+- [x] **Step 5: Commit** → committed locally as `d49ee56` (`feat: dated alias-aware exposure trace`)
 
 ---
 
@@ -1413,7 +1413,7 @@ The `trace(...)` body:
   - `decide(g, a_id, b_id, accept: bool, by: str, reason: str, confirm_merge=False) -> dict`
   - Exceptions: `MergeNeedsConfirmation(Exception)`, `ClusterTooLarge(Exception)`, `IdentifierConflict(Exception)`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 import pytest, uuid
@@ -1466,9 +1466,9 @@ def test_two_cluster_merge_needs_confirmation(store):
     store.drop(ws)
 ```
 
-- [ ] **Step 2: Run them to verify they fail** → `pytest tests/test_aliases.py -v` → FAIL
+- [x] **Step 2: Run them to verify they fail** → collection initially failed because `graph.aliases` did not exist; implementation testing also exposed an unanchored candidate listing query, and the rejection-persistence regression failed when regeneration reopened an analyst rejection.
 
-- [ ] **Step 3: Implement `aliases.py`**
+- [x] **Step 3: Implement `aliases.py`**
 
 ```python
 from rapidfuzz import fuzz
@@ -1512,9 +1512,9 @@ How `generate_candidates(g)` works:
    - `none` → write nothing.
 4. Return the counts by state.
 
-`list_candidates` matches `(a {id:$id})-[c:CANDIDATE_SAME_AS]-(b)` in both directions, so `b_*` is always the other side.
+`list_candidates` anchors `a` to the requested entity and matches `(a {id:$id})-[c:CANDIDATE_SAME_AS]-(b)` in either direction, so `b_*` is always the other side.
 
-For `touches_designated`, use `OPTIONAL MATCH (b)-[d:DESIGNATED]->(p:Program) WHERE p.authority IN $auth AND d.delisted_on IS NULL`, then `count(d) > 0`.
+For `touches_designated`, use `OPTIONAL MATCH (b)-[d:DESIGNATED]->(p:Program) WHERE p.authority IN $auth AND d.delisted_on IS NULL`, then `count(d) > 0`; this field describes the other endpoint, not the requested anchor.
 
 `pending_to_designated` uses the same query with `a.canon IN $scope AND c.state='pending'`, and keeps only rows where `touches_designated` is true.
 
@@ -1525,8 +1525,8 @@ For `touches_designated`, use `OPTIONAL MATCH (b)-[d:DESIGNATED]->(p:Program) WH
 4. On reject: set the candidate's `state='rejected'` and its `reason`.
 5. Return `{"accepted": bool, "canon": <canon of a after the change>}`.
 
-- [ ] **Step 4: Run the tests** → 6 passed
-- [ ] **Step 5: Commit** → `git commit -m "feat: alias candidates, identifier-conflict rejection, chaining guard"`
+- [x] **Step 4: Run the tests** → `ST_REQUIRE_DB=1 python -m pytest tests/test_aliases.py -q` → 10 passed against pinned FalkorDB 6.0.2
+- [x] **Step 5: Commit** → `git commit -m "feat: alias candidates, identifier-conflict rejection, chaining guard"`
 
 ---
 
