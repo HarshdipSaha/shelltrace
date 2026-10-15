@@ -5,12 +5,9 @@ from __future__ import annotations
 import os
 import sys
 import time
+import uuid
 from collections.abc import Callable
 from typing import Any
-
-
-GRAPH_NAME = "st_verify"
-COPY_NAME = "st_verify_copy"
 
 
 def _connection(db: Any) -> Any:
@@ -35,10 +32,18 @@ def _rows(result: Any) -> list[list[Any]]:
     return rows
 
 
-def _clear_graphs(db: Any) -> None:
-    for name in (COPY_NAME, GRAPH_NAME):
-        if _connection(db).exists(name):
-            _execute(db, "GRAPH.DELETE", name)
+def _clear_graphs(db: Any, graph_name: str, copy_name: str) -> None:
+    errors: list[str] = []
+    for name in (copy_name, graph_name):
+        try:
+            if _connection(db).exists(name):
+                _execute(db, "GRAPH.DELETE", name)
+        except Exception as exc:
+            errors.append(f"{name}: {type(exc).__name__}: {exc}")
+    if errors:
+        raise RuntimeError(
+            "could not clean up verification graphs: " + "; ".join(errors)
+        )
 
 
 def _v2(g: Any) -> None:
@@ -75,9 +80,9 @@ def _v3(g: Any) -> str:
     return create_mode
 
 
-def _v4(db: Any) -> None:
-    _execute(db, "GRAPH.COPY", GRAPH_NAME, COPY_NAME)
-    copied = db.select_graph(COPY_NAME)
+def _v4(db: Any, graph_name: str, copy_name: str) -> None:
+    _execute(db, "GRAPH.COPY", graph_name, copy_name)
+    copied = db.select_graph(copy_name)
     rows = _rows(copied.query("MATCH (n:N) RETURN count(n)"))
     if not rows or rows[0][0] != 3:
         raise AssertionError(f"GRAPH.COPY should copy 3 nodes, got {rows!r}")
@@ -142,7 +147,7 @@ CHECK_NAMES = (
 )
 
 
-def _connect() -> tuple[Any, Any]:
+def _connect() -> Any:
     from falkordb import FalkorDB
 
     host = os.getenv("FALKORDB_HOST", "127.0.0.1")
@@ -161,7 +166,7 @@ def _connect() -> tuple[Any, Any]:
         try:
             db = FalkorDB(**kwargs)
             db.connection.ping()
-            return db, db.select_graph(GRAPH_NAME)
+            return db
         except Exception as exc:
             last_error = exc
             time.sleep(1)
@@ -192,61 +197,78 @@ def _server_facts(db: Any) -> tuple[str, str, str]:
 
 
 def main() -> int:
+    run_id = uuid.uuid4().hex
+    graph_name = f"st_verify_{run_id}"
+    copy_name = f"st_verify_copy_{run_id}"
     try:
-        db, graph = _connect()
+        db = _connect()
     except Exception as exc:
         print(f"FAIL connection: {exc}", file=sys.stderr)
         return 2
 
-    _clear_graphs(db)
-    graph.query(
-        "CREATE (a:N {name:'blue harbor'}), "
-        "(b:N {name:'red harbor'}), "
-        "(c:N {name:'blue vessel'}), "
-        "(a)-[:S]->(c), (a)-[:OWNS {k:'a-b'}]->(b), "
-        "(b)-[:OWNS {k:'b-a'}]->(a)"
-    )
-
     deferred = 1
-    print(
-        "DEFERRED V1_ro_query_rejects_write: verify against Task 1's production "
-        "GraphStore helper after Tasks 1-3; a verifier-local guard would not test "
-        "the application's read-only boundary."
-    )
-    checks: dict[str, Callable[[], str | None]] = {
-        CHECK_NAMES[0]: lambda: _v2(graph),
-        CHECK_NAMES[1]: lambda: _v3(graph),
-        CHECK_NAMES[2]: lambda: _v4(db),
-        CHECK_NAMES[3]: lambda: _v5(graph),
-        CHECK_NAMES[4]: lambda: _v6(graph),
-        CHECK_NAMES[5]: lambda: _v7(graph),
-        CHECK_NAMES[6]: lambda: _v8(graph),
-        CHECK_NAMES[7]: _v9,
-    }
     failures = 0
-    for name, check in checks.items():
+    names_reserved = False
+    try:
+        graph = db.select_graph(graph_name)
+        connection = _connection(db)
+        if connection.exists(graph_name) or connection.exists(copy_name):
+            raise RuntimeError(
+                "generated verification graph name already exists; "
+                "refusing to use or delete it"
+            )
+        names_reserved = True
+
+        graph.query(
+            "CREATE (a:N {name:'blue harbor'}), "
+            "(b:N {name:'red harbor'}), "
+            "(c:N {name:'blue vessel'}), "
+            "(a)-[:S]->(c), (a)-[:OWNS {k:'a-b'}]->(b), "
+            "(b)-[:OWNS {k:'b-a'}]->(a)"
+        )
+
+        print(
+            "DEFERRED V1_ro_query_rejects_write: verify against Task 1's production "
+            "GraphStore helper after Tasks 1-3; a verifier-local guard would not test "
+            "the application's read-only boundary."
+        )
+        checks: dict[str, Callable[[], str | None]] = {
+            CHECK_NAMES[0]: lambda: _v2(graph),
+            CHECK_NAMES[1]: lambda: _v3(graph),
+            CHECK_NAMES[2]: lambda: _v4(db, graph_name, copy_name),
+            CHECK_NAMES[3]: lambda: _v5(graph),
+            CHECK_NAMES[4]: lambda: _v6(graph),
+            CHECK_NAMES[5]: lambda: _v7(graph),
+            CHECK_NAMES[6]: lambda: _v8(graph),
+            CHECK_NAMES[7]: _v9,
+        }
+        for name, check in checks.items():
+            try:
+                note = check()
+            except Exception as exc:
+                failures += 1
+                print(f"FAIL {name}: {type(exc).__name__}: {exc}")
+            else:
+                print(f"PASS {name}" + (f": {note}" if note else ""))
+
         try:
-            note = check()
+            redis_version, falkordb_version, graph_config = _server_facts(db)
+            print(f"SERVER redis_version={redis_version}")
+            print(f"FALKORDB version={falkordb_version}")
+            print(f"GRAPH.CONFIG GET *: {graph_config}")
         except Exception as exc:
             failures += 1
-            print(f"FAIL {name}: {type(exc).__name__}: {exc}")
-        else:
-            print(f"PASS {name}" + (f": {note}" if note else ""))
-
-    try:
-        redis_version, falkordb_version, graph_config = _server_facts(db)
-        print(f"SERVER redis_version={redis_version}")
-        print(f"FALKORDB version={falkordb_version}")
-        print(f"GRAPH.CONFIG GET *: {graph_config}")
+            print(f"FAIL server_facts: {type(exc).__name__}: {exc}")
     except Exception as exc:
         failures += 1
-        print(f"FAIL server_facts: {type(exc).__name__}: {exc}")
-
-    try:
-        _clear_graphs(db)
-    except Exception as exc:
-        failures += 1
-        print(f"FAIL cleanup: {type(exc).__name__}: {exc}")
+        print(f"FAIL setup: {type(exc).__name__}: {exc}")
+    finally:
+        if names_reserved:
+            try:
+                _clear_graphs(db, graph_name, copy_name)
+            except Exception as exc:
+                failures += 1
+                print(f"FAIL cleanup: {type(exc).__name__}: {exc}")
 
     print(
         f"RESULT {'FAIL' if failures else 'PASS'} "
