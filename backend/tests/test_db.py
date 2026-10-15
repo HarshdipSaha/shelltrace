@@ -1,5 +1,6 @@
 from dataclasses import FrozenInstanceError
 from threading import Event, Lock, Thread
+from time import monotonic
 from uuid import uuid4
 
 import pytest
@@ -106,30 +107,68 @@ def test_workspace_list_only_returns_workspace_suffixes(store, golden_ws):
 class _FakeRedis:
     def __init__(self):
         self.values = {}
+        self.expirations = {}
         self.lock = Lock()
         self.graphs = {}
         self.unsafe_copy = False
         self.copy_calls = []
 
+    def _expire_locked(self, name):
+        expires_at = self.expirations.get(name)
+        if expires_at is not None and monotonic() >= expires_at:
+            self.values.pop(name, None)
+            self.expirations.pop(name, None)
+
     def set(self, name, value, *, nx=False, px=None):
         with self.lock:
+            self._expire_locked(name)
             if nx and name in self.values:
                 return None
             self.values[name] = value
+            if px is None:
+                self.expirations.pop(name, None)
+            else:
+                self.expirations[name] = monotonic() + px / 1000
             return True
 
     def get(self, name):
         with self.lock:
+            self._expire_locked(name)
             return self.values.get(name)
 
     def delete(self, name):
         with self.lock:
+            self._expire_locked(name)
+            self.expirations.pop(name, None)
             return int(self.values.pop(name, None) is not None)
 
-    def eval(self, script, numkeys, key, token):
+    def eval(self, script, numkeys, *keys_and_args):
         with self.lock:
+            script_lower = script.lower()
+            if "pexpire" in script_lower:
+                key, token, ttl_ms = keys_and_args
+                self._expire_locked(key)
+                if self.values.get(key) == token:
+                    self.expirations[key] = monotonic() + int(ttl_ms) / 1000
+                    return 1
+                return 0
+            if "keys[2]" in script_lower:
+                lock_key, ready_key, token, *args = keys_and_args
+                self._expire_locked(lock_key)
+                if self.values.get(lock_key) != token:
+                    return 0
+                if "redis.call('set'" in script_lower:
+                    self.values[ready_key] = args[0]
+                    self.expirations.pop(ready_key, None)
+                else:
+                    self.values.pop(ready_key, None)
+                    self.expirations.pop(ready_key, None)
+                return 1
+            key, token = keys_and_args
+            self._expire_locked(key)
             if self.values.get(key) == token:
                 del self.values[key]
+                self.expirations.pop(key, None)
                 return 1
             return 0
 
@@ -277,3 +316,178 @@ def test_failed_workspace_seed_is_not_ready_and_is_retried(monkeypatch):
     assert connection.get(ready_key) == "ready-v1"
     assert connection.graphs[workspace_name] == "complete"
     assert connection.copy_calls == []
+
+
+def test_drop_waits_until_in_progress_provision_finishes(monkeypatch):
+    connection = _FakeRedis()
+    store = _fake_store(monkeypatch, connection)
+    seed_started = Event()
+    finish_seed = Event()
+    drop_started = Event()
+    failures = []
+    workspace = "t_drop_race"
+    graph_name = f"st_ws_{workspace}"
+
+    def seeder(graph):
+        if graph.name != graph_name:
+            raise AssertionError("force_seed must target the workspace")
+        with connection.lock:
+            connection.graphs[graph.name] = "partial"
+        seed_started.set()
+        if not finish_seed.wait(timeout=5):
+            raise TimeoutError("workspace seed was not released")
+        with connection.lock:
+            connection.graphs[graph.name] = "complete"
+
+    def provision():
+        try:
+            store.provision(workspace, seeder, force_seed=True)
+        except Exception as exc:
+            failures.append(exc)
+
+    def drop():
+        drop_started.set()
+        try:
+            store.drop(workspace)
+        except Exception as exc:
+            failures.append(exc)
+
+    provision_thread = Thread(target=provision)
+    provision_thread.start()
+    assert seed_started.wait(timeout=2)
+    drop_thread = Thread(target=drop)
+    drop_thread.start()
+    assert drop_started.wait(timeout=2)
+    Event().wait(0.15)
+    try:
+        assert drop_thread.is_alive(), "drop should wait for the provision lock"
+        assert connection.graphs.get(graph_name) == "partial"
+    finally:
+        finish_seed.set()
+        provision_thread.join(timeout=5)
+        drop_thread.join(timeout=5)
+
+    assert not provision_thread.is_alive()
+    assert not drop_thread.is_alive()
+    assert failures == []
+    assert graph_name not in connection.graphs
+    assert connection.get(f"shelltrace:graph-ready:{graph_name}") is None
+
+
+def test_template_lock_renews_beyond_original_ttl(monkeypatch):
+    import shelltrace.db as db
+
+    monkeypatch.setattr(db, "_LOCK_TTL_MS", 100)
+    connection = _FakeRedis()
+    store = _fake_store(monkeypatch, connection)
+    template_started = Event()
+    finish_template = Event()
+    template_attempts = 0
+    failures = []
+
+    def seeder(graph):
+        nonlocal template_attempts
+        if graph.name == "st_facts_test":
+            template_attempts += 1
+            with connection.lock:
+                connection.graphs[graph.name] = "partial"
+            template_started.set()
+            if not finish_template.wait(timeout=5):
+                raise TimeoutError("template seed was not released")
+        with connection.lock:
+            connection.graphs[graph.name] = "complete"
+
+    def provision(workspace):
+        try:
+            store.provision(workspace, seeder)
+        except Exception as exc:
+            failures.append(exc)
+
+    first = Thread(target=provision, args=("t_lease_a",))
+    first.start()
+    assert template_started.wait(timeout=2)
+    Event().wait(0.3)  # three times the configured lock TTL
+    second = Thread(target=provision, args=("t_lease_b",))
+    second.start()
+    second.join(timeout=2)
+    try:
+        assert not second.is_alive(), "a worker should seed its own graph while template lock is held"
+        assert template_attempts == 1
+        assert connection.graphs.get("st_ws_t_lease_b") == "complete"
+        assert connection.copy_calls == []
+    finally:
+        finish_template.set()
+        first.join(timeout=5)
+        second.join(timeout=5)
+
+    assert not first.is_alive()
+    assert failures == []
+    assert template_attempts == 1
+    assert connection.copy_calls == [("st_facts_test", "st_ws_t_lease_a")]
+    assert not connection.unsafe_copy
+
+
+def test_workspace_lock_renews_beyond_original_ttl(monkeypatch):
+    import shelltrace.db as db
+
+    monkeypatch.setattr(db, "_LOCK_TTL_MS", 100)
+    connection = _FakeRedis()
+    connection.graphs["st_facts_test"] = "complete"
+    connection.set("shelltrace:graph-ready:st_facts_test", "ready-v1")
+    store = _fake_store(monkeypatch, connection)
+    seed_started = Event()
+    finish_seed = Event()
+    second_seed_entered = Event()
+    first_failures = []
+    second_failures = []
+    workspace = "t_ws_lease"
+    graph_name = f"st_ws_{workspace}"
+
+    def blocking_seeder(graph):
+        with connection.lock:
+            connection.graphs[graph.name] = "partial"
+        seed_started.set()
+        if not finish_seed.wait(timeout=5):
+            raise TimeoutError("workspace seed was not released")
+        with connection.lock:
+            connection.graphs[graph.name] = "complete"
+
+    def second_seeder(graph):
+        second_seed_entered.set()
+        with connection.lock:
+            connection.graphs[graph.name] = "complete"
+
+    def first_provision():
+        try:
+            store.provision(workspace, blocking_seeder, force_seed=True)
+        except Exception as exc:
+            first_failures.append(exc)
+
+    def second_provision():
+        try:
+            store.provision(workspace, second_seeder)
+        except Exception as exc:
+            second_failures.append(exc)
+
+    first = Thread(target=first_provision)
+    first.start()
+    assert seed_started.wait(timeout=2)
+    Event().wait(0.3)  # three times the configured lock TTL
+    second = Thread(target=second_provision)
+    second.start()
+    Event().wait(0.15)
+    try:
+        assert not second_seed_entered.is_set(), "second worker entered while lease should be renewed"
+        assert second.is_alive(), "same-workspace provision should wait for the active owner"
+        assert connection.graphs.get(graph_name) == "partial"
+    finally:
+        finish_seed.set()
+        first.join(timeout=5)
+        second.join(timeout=5)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert first_failures == []
+    assert second_failures == []
+    assert not second_seed_entered.is_set()
+    assert connection.graphs[graph_name] == "complete"

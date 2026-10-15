@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import re
 import time
+from contextlib import contextmanager
+from threading import Event, Thread
 from typing import Any, Callable
 from uuid import uuid4
 
@@ -15,9 +17,29 @@ _TIMEOUT_MS = 2000
 _LOCK_TTL_MS = 300_000
 _LOCK_WAIT_SECONDS = 30
 _READY_VALUE = "ready-v1"
+_RENEW_LOCK_SCRIPT = """
+if redis.call('get', KEYS[1]) == ARGV[1] then
+    return redis.call('pexpire', KEYS[1], ARGV[2])
+end
+return 0
+"""
 _RELEASE_LOCK_SCRIPT = """
 if redis.call('get', KEYS[1]) == ARGV[1] then
     return redis.call('del', KEYS[1])
+end
+return 0
+"""
+_MARK_READY_SCRIPT = """
+if redis.call('get', KEYS[1]) == ARGV[1] then
+    redis.call('set', KEYS[2], ARGV[2])
+    return 1
+end
+return 0
+"""
+_CLEAR_READY_SCRIPT = """
+if redis.call('get', KEYS[1]) == ARGV[1] then
+    redis.call('del', KEYS[2])
+    return 1
 end
 return 0
 """
@@ -81,11 +103,12 @@ class GraphStore:
         graph_name = f"st_ws_{ws}"
         lock_key = self._lock_key(graph_name)
         token = self._acquire_lock(lock_key, wait_seconds=_LOCK_WAIT_SECONDS)
-        try:
+        with self._renewed_lock(lock_key, token) as ensure_lock:
             if not force_seed and self._is_ready(graph_name):
                 return
 
-            self._clear_ready(graph_name)
+            if not self._clear_ready_if_owner(graph_name, lock_key, token):
+                raise TimeoutError(f"Lost graph lock before provisioning: {graph_name}")
             try:
                 if force_seed:
                     seeder(graph)
@@ -107,17 +130,23 @@ class GraphStore:
                         # Another worker is building the template. Never copy it
                         # until its ready marker exists; seed this workspace alone.
                         seeder(graph)
-                self._mark_ready(graph_name)
+                ensure_lock()
+                if not self._mark_ready_if_owner(graph_name, lock_key, token):
+                    raise TimeoutError(f"Lost graph lock before marking ready: {graph_name}")
             except Exception:
-                self._clear_ready(graph_name)
+                self._clear_ready_if_owner(graph_name, lock_key, token)
                 raise
-        finally:
-            self._release_lock(lock_key, token)
 
     def drop(self, ws: str) -> None:
         graph_name = f"st_ws_{ws}"
-        self.workspace(ws).delete()
-        self._clear_ready(graph_name)
+        graph = self.workspace(ws)
+        lock_key = self._lock_key(graph_name)
+        token = self._acquire_lock(lock_key, wait_seconds=_LOCK_WAIT_SECONDS)
+        with self._renewed_lock(lock_key, token) as ensure_lock:
+            ensure_lock()
+            graph.delete()
+            if not self._clear_ready_if_owner(graph_name, lock_key, token):
+                raise TimeoutError(f"Lost graph lock before dropping workspace: {graph_name}")
 
     @staticmethod
     def _lock_key(graph_name: str) -> str:
@@ -135,11 +164,28 @@ class GraphStore:
             value = value.decode("ascii", errors="ignore")
         return value == _READY_VALUE
 
-    def _mark_ready(self, graph_name: str) -> None:
-        self._db.connection.set(self._ready_key(graph_name), _READY_VALUE)
+    def _mark_ready_if_owner(self, graph_name: str, lock_key: str, token: str) -> bool:
+        return bool(
+            self._db.connection.eval(
+                _MARK_READY_SCRIPT,
+                2,
+                lock_key,
+                self._ready_key(graph_name),
+                token,
+                _READY_VALUE,
+            )
+        )
 
-    def _clear_ready(self, graph_name: str) -> None:
-        self._db.connection.delete(self._ready_key(graph_name))
+    def _clear_ready_if_owner(self, graph_name: str, lock_key: str, token: str) -> bool:
+        return bool(
+            self._db.connection.eval(
+                _CLEAR_READY_SCRIPT,
+                2,
+                lock_key,
+                self._ready_key(graph_name),
+                token,
+            )
+        )
 
     def _acquire_lock(self, key: str, *, wait_seconds: float = 0) -> str:
         token = uuid4().hex
@@ -153,6 +199,48 @@ class GraphStore:
 
     def _release_lock(self, key: str, token: str) -> None:
         self._db.connection.eval(_RELEASE_LOCK_SCRIPT, 1, key, token)
+
+    @contextmanager
+    def _renewed_lock(self, key: str, token: str):
+        stop = Event()
+        lost = Event()
+        heartbeat = Thread(
+            target=self._renew_lock,
+            args=(key, token, stop, lost),
+            daemon=True,
+        )
+        heartbeat.start()
+        try:
+            self._assert_lock_owned(key, token, lost)
+            yield lambda: self._assert_lock_owned(key, token, lost)
+        finally:
+            stop.set()
+            heartbeat.join()
+            self._release_lock(key, token)
+
+    def _renew_lock(self, key: str, token: str, stop: Event, lost: Event) -> None:
+        interval_seconds = max(0.01, min(_LOCK_TTL_MS / 4000, 30.0))
+        while not stop.wait(interval_seconds):
+            try:
+                renewed = self._db.connection.eval(
+                    _RENEW_LOCK_SCRIPT, 1, key, token, _LOCK_TTL_MS
+                )
+            except Exception:
+                lost.set()
+                return
+            if not renewed:
+                lost.set()
+                return
+
+    def _assert_lock_owned(self, key: str, token: str, lost: Event) -> None:
+        if lost.is_set():
+            raise TimeoutError(f"Lost graph lock: {key}")
+        owner = self._db.connection.get(key)
+        if isinstance(owner, bytes):
+            owner = owner.decode("ascii", errors="ignore")
+        if owner != token:
+            lost.set()
+            raise TimeoutError(f"Lost graph lock: {key}")
 
     def _ensure_template_ready(self, seeder: Callable[[Graph], Any]) -> bool:
         graph_name = self.s.template_graph
@@ -169,16 +257,17 @@ class GraphStore:
             # attempt. If not, the caller safely seeds its own graph.
             return self._is_ready(graph_name)
 
-        try:
+        with self._renewed_lock(lock_key, lock_token) as ensure_lock:
             if self._is_ready(graph_name):
                 return True
-            self._clear_ready(graph_name)
+            if not self._clear_ready_if_owner(graph_name, lock_key, lock_token):
+                raise TimeoutError(f"Lost graph lock before seeding template: {graph_name}")
             try:
                 seeder(self.template())
-                self._mark_ready(graph_name)
+                ensure_lock()
+                if not self._mark_ready_if_owner(graph_name, lock_key, lock_token):
+                    raise TimeoutError(f"Lost graph lock before marking template ready: {graph_name}")
             except Exception:
-                self._clear_ready(graph_name)
+                self._clear_ready_if_owner(graph_name, lock_key, lock_token)
                 raise
             return True
-        finally:
-            self._release_lock(lock_key, lock_token)
