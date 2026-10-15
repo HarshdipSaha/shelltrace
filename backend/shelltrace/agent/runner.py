@@ -386,14 +386,14 @@ async def run_case(
             case_id,
             StepIn(
                 kind="decision",
-                actor=actor_override or "policy",
-                rationale="No reasoning brain is configured; deterministic policy completion will continue.",
-                fallback_reason="brain_unavailable",
+                actor=actor_override or "playbook",
+                rationale="No model key is configured; deterministic playbook completion will continue.",
+                fallback_reason="no_model_key",
             ),
         )
 
     policy_actor = actor_override or (
-        "playbook" if req.mode == "playbook" else "policy"
+        "playbook" if req.mode == "playbook" or brain is None else "policy"
     )
     for name, args in MANDATORY(req):
         key = (name, canonical_json(args))
@@ -627,7 +627,11 @@ async def run_case(
         or (
             brain.model_id
             if brain is not None and req.mode == "agent"
-            else ("playbook" if req.mode == "playbook" else "policy")
+            else (
+                "playbook"
+                if req.mode == "playbook" or brain is None
+                else "policy"
+            )
         ),
         disposition=auth.disposition,
         reasons=auth.reasons,
