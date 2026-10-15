@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 const SCREENING_TOOLTIP = 'List lookup only — what ShellTrace adds is the ownership graph';
 
@@ -6,23 +6,30 @@ function NameScreen({ result, onScreen }) {
   const [screening, setScreening] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const activeCaseId = useRef(result?.case_id);
+  activeCaseId.current = result?.case_id;
 
   useEffect(() => {
     setScreening(null);
+    setLoading(false);
     setError('');
   }, [result?.case_id]);
 
   const run = async () => {
     if (!result) return;
+    const caseId = result.case_id;
     setLoading(true);
     setError('');
     try {
-      setScreening(await onScreen());
+      const nextScreening = await onScreen();
+      if (activeCaseId.current === caseId) setScreening(nextScreening);
     } catch (cause) {
-      setScreening(null);
-      setError(cause?.message || 'Name screening is unavailable.');
+      if (activeCaseId.current === caseId) {
+        setScreening(null);
+        setError(cause?.message || 'Name screening is unavailable.');
+      }
     } finally {
-      setLoading(false);
+      if (activeCaseId.current === caseId) setLoading(false);
     }
   };
 

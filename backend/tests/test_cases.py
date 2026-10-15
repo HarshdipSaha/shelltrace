@@ -116,7 +116,16 @@ def test_case_cannot_be_refinalized_after_a_review(store, case_workspace):
     cases = CaseStore(store.workspace(case_workspace))
     case_id = cases.open(_request(case_workspace), "c_nordharbor", "synthetic-v1")
     cases.finish(case_id, _result(case_id, case_workspace, "c_nordharbor", "CLEAR_WITHIN_BOUNDS"))
-    cases.review(case_id, ReviewIn(reviewer="analyst-a", code="CONFIRMED_CLEAR", reason="reviewed clear result"))
+    saved = cases.review(case_id, ReviewIn(reviewer="analyst-a", code="CONFIRMED_CLEAR", reason="reviewed clear result"))
+
+    assert cases.reviews(case_id) == [{
+        "case_id": case_id,
+        "reviewer": "analyst-a",
+        "second_reviewer": None,
+        "code": "CONFIRMED_CLEAR",
+        "reason": "reviewed clear result",
+        "at": saved["at"],
+    }]
 
     with pytest.raises(ValueError, match="already finalized"):
         cases.finish(case_id, _result(case_id, case_workspace, "c_nordharbor", "EXPOSED"))

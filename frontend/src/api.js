@@ -43,6 +43,10 @@ export const review = (workspace, id, body) => request(
   jsonBody(body),
 );
 
+export const getReviews = (workspace, id) => request(
+  `/cases/${encodeURIComponent(id)}/reviews?${query({ workspace })}`,
+);
+
 export const draftReport = (workspace, id) => request(
   `/cases/${encodeURIComponent(id)}/report?${query({ workspace })}`,
   { method: 'POST' },

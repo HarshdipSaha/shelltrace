@@ -1,28 +1,36 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 function ReportPanel({ result, onDraft, onSelect }) {
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
+  const activeCaseId = useRef(result?.case_id);
+  activeCaseId.current = result?.case_id;
 
   useEffect(() => {
     setReport(null);
+    setLoading(false);
     setError('');
     setCopied(false);
   }, [result?.case_id]);
 
   const draft = async () => {
+    const caseId = result?.case_id;
+    if (!caseId) return;
     setLoading(true);
     setError('');
     setCopied(false);
     try {
-      setReport(await onDraft());
+      const nextReport = await onDraft();
+      if (activeCaseId.current === caseId) setReport(nextReport);
     } catch (cause) {
-      setReport(null);
-      setError(cause?.message || 'The report could not be drafted.');
+      if (activeCaseId.current === caseId) {
+        setReport(null);
+        setError(cause?.message || 'The report could not be drafted.');
+      }
     } finally {
-      setLoading(false);
+      if (activeCaseId.current === caseId) setLoading(false);
     }
   };
 

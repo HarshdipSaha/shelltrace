@@ -223,6 +223,25 @@ class CaseStore:
             return None
         return CaseResult.model_validate_json(result[0]["result"])
 
+    def reviews(self, case_id: str) -> list[dict] | None:
+        """Return a case's persisted review history, newest first, or None if absent."""
+        rows = ro(
+            self.g,
+            """MATCH (c:Case {id:$id})
+               OPTIONAL MATCH (c)-[:REVIEWED]->(r:Review)
+               RETURN c.id AS case_id, r.reviewer AS reviewer, r.second_reviewer AS second_reviewer,
+                      r.code AS code, r.reason AS reason, r.at AS at
+               ORDER BY r.at DESC""",
+            {"id": case_id},
+        )
+        if not rows:
+            return None
+        return [
+            {key: row.get(key) for key in ("case_id", "reviewer", "second_reviewer", "code", "reason", "at")}
+            for row in rows
+            if row.get("reviewer") is not None
+        ]
+
     def review(self, case_id: str, rv: ReviewIn) -> dict:
         with graph_operation_lock(self.g) as graph:
             case_rows = ro(

@@ -146,6 +146,9 @@ function App() {
     });
   }, [form.workspace, result]);
   const decideAliasAndRefresh = useCallback(async (candidate, accept, reason, confirmMerge) => {
+    const requestId = caseRequestId.current;
+    const caseId = result?.case_id;
+    if (!caseId) return;
     await decideAlias(form.workspace, {
       a_id: candidate.a_id,
       b_id: candidate.b_id,
@@ -154,8 +157,10 @@ function App() {
       reason,
       confirm_merge: confirmMerge,
     });
-    await runCase();
-  }, [form.workspace, runCase]);
+    if (caseRequestId.current === requestId && result?.case_id === caseId) {
+      await runCase();
+    }
+  }, [form.workspace, result, runCase]);
   const openNotificationCase = useCallback(async (item) => {
     const caseId = item.diff?.new_case_id || item.new_case_id || item.case_id;
     const requestId = ++caseRequestId.current;
@@ -313,7 +318,7 @@ function App() {
           <NameScreen result={result} onScreen={runNameScreen} />
           <AliasPanel result={result} onDecide={decideAliasAndRefresh} />
           <ReportPanel result={result} onDraft={createReport} onSelect={setSelected} />
-          <ReviewPanel result={result} onSubmit={submitReview} />
+          <ReviewPanel result={result} onSubmit={submitReview} workspace={form.workspace} />
           <EvidenceLocker result={result} selectedKey={selected} />
 
           <section className="context-card context-card--quiet">

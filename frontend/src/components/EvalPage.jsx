@@ -4,6 +4,20 @@ import { evalLatest } from '../api.js';
 const asArray = (value) => Array.isArray(value) ? value : [];
 const asEntries = (value) => value && typeof value === 'object' && !Array.isArray(value) ? Object.entries(value) : [];
 
+function evaluationRows(e3) {
+  const flat = asArray(e3?.strata || e3?.by_name_visibility || e3?.recall_by_stratum);
+  if (flat.length) return flat;
+  return asEntries(e3?.by_authority).flatMap(([authority, value]) =>
+    asArray(value?.strata || value?.by_stratum).map((row) => ({ authority, ...row })),
+  );
+}
+
+function formatRecall(value) {
+  const raw = value && typeof value === 'object' ? value.recall ?? value.value : value;
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) return '—';
+  return `${(raw >= 0 && raw <= 1 ? raw * 100 : raw).toFixed(1)}%`;
+}
+
 function EmptyRow({ columns, children }) {
   return <tr><td colSpan={columns} className="eval-empty-row">{children}</td></tr>;
 }
@@ -28,7 +42,7 @@ function EvalPage({ workspace = 'demo' }) {
   const ablations = asEntries(golden?.ablations || playbook?.ablations);
   const agent = golden?.agent || playbook?.agent || {};
   const e3 = payload?.real_e3;
-  const e3Rows = asArray(e3?.strata || e3?.by_name_visibility || e3?.recall_by_stratum);
+  const e3Rows = evaluationRows(e3);
   const latencyRows = asEntries(golden?.latency || payload?.latency || golden?.latency_by_tool);
   const snapshots = golden?.snapshot_versions || golden?.snapshots || payload?.snapshot_versions || {};
   const pass5 = agent?.disposition_pass5 ?? agent?.pass5 ?? agent?.pass_5 ?? '—';
@@ -72,8 +86,8 @@ function EvalPage({ workspace = 'demo' }) {
 
         <section className="eval-section panel" aria-label="E3 recall by name visibility">
           <div className="section-heading"><div><p className="eyebrow">REAL-DATA EVALUATION</p><h2>E3 recall by name visibility</h2></div></div>
-          <div className="eval-table-wrap"><table><thead><tr><th>Stratum</th><th>Recall</th><th>Hits / positives</th></tr></thead><tbody>
-            {e3Rows.length ? e3Rows.map((row, index) => <tr key={row.name_visibility || row.stratum || index}><td>{row.name_visibility || row.stratum || row.name || '—'}</td><td>{row.recall ?? '—'}</td><td>{row.hits ?? row.correct ?? '—'} / {row.positives ?? row.total ?? '—'}</td></tr>) : <EmptyRow columns={3}>E3 recall results are not available yet.</EmptyRow>}
+          <div className="eval-table-wrap"><table><thead><tr><th>Authority</th><th>Stratum</th><th>n</th><th>Graph-flagged recall</th><th>Graph-blocked recall</th><th>Name-screen recall</th></tr></thead><tbody>
+            {e3Rows.length ? e3Rows.map((row, index) => <tr key={`${row.authority || 'all'}-${row.name_visibility || row.stratum || index}`}><td>{row.authority || '—'}</td><td>{row.name_visibility || row.stratum || row.name || '—'}</td><td>{row.n ?? '—'}</td><td>{formatRecall(row.graph_flagged_recall ?? row.graph_flagged)}</td><td>{formatRecall(row.graph_blocked_recall ?? row.graph_blocked)}</td><td>{formatRecall(row.name_screen_recall ?? row.name_screen)}</td></tr>) : <EmptyRow columns={6}>E3 recall results are not available yet.</EmptyRow>}
           </tbody></table></div>
         </section>
       </div>

@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { getReviews } from '../api.js';
 
 const REVIEW_CODES = [
   'CONFIRMED_EXPOSED',
@@ -10,7 +11,7 @@ const REVIEW_CODES = [
 
 const REMOVES_EXPOSURE = new Set(['CONFIRMED_CLEAR', 'FALSE_POSITIVE_ALIAS', 'OVERRIDDEN']);
 
-function ReviewPanel({ result, onSubmit }) {
+function ReviewPanel({ result, onSubmit, workspace = 'demo' }) {
   const [code, setCode] = useState('CONFIRMED_EXPOSED');
   const [reason, setReason] = useState('');
   const [reviewer, setReviewer] = useState('');
@@ -18,16 +19,39 @@ function ReviewPanel({ result, onSubmit }) {
   const [history, setHistory] = useState([]);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const activeCaseId = useRef(result?.case_id);
+  const historyRequestId = useRef(0);
+  activeCaseId.current = result?.case_id;
   const needsSecondReviewer = result?.disposition === 'EXPOSED' && REMOVES_EXPOSURE.has(code);
 
   useEffect(() => {
+    const caseId = result?.case_id;
+    const requestId = ++historyRequestId.current;
+    let active = true;
     setHistory([]);
     setError('');
+    setSubmitting(false);
     setCode('CONFIRMED_EXPOSED');
-  }, [result?.case_id]);
+    if (caseId) {
+      getReviews(workspace, caseId)
+        .then((items) => {
+          if (active && historyRequestId.current === requestId && activeCaseId.current === caseId) {
+            setHistory(items);
+          }
+        })
+        .catch((cause) => {
+          if (active && historyRequestId.current === requestId && activeCaseId.current === caseId) {
+            setError(cause?.message || 'Review history could not be loaded.');
+          }
+        });
+    }
+    return () => { active = false; };
+  }, [result?.case_id, workspace]);
 
   const submit = async (event) => {
     event.preventDefault();
+    const caseId = result?.case_id;
+    if (!caseId) return;
     setSubmitting(true);
     setError('');
     try {
@@ -37,16 +61,21 @@ function ReviewPanel({ result, onSubmit }) {
         reviewer: reviewer.trim(),
         ...(needsSecondReviewer ? { second_reviewer: secondReviewer.trim() } : {}),
       });
-      setHistory((current) => [saved, ...current]);
-      setReason('');
-      setError('');
+      if (activeCaseId.current === caseId) {
+        historyRequestId.current += 1;
+        setHistory((current) => [saved, ...current]);
+        setReason('');
+        setError('');
+      }
     } catch (cause) {
       const message = cause?.message || 'The review could not be saved.';
-      setError(/second reviewer is required/i.test(message)
-        ? 'A second reviewer is required to remove an exposure'
-        : message);
+      if (activeCaseId.current === caseId) {
+        setError(/second reviewer is required/i.test(message)
+          ? 'A second reviewer is required to remove an exposure'
+          : message);
+      }
     } finally {
-      setSubmitting(false);
+      if (activeCaseId.current === caseId) setSubmitting(false);
     }
   };
 
