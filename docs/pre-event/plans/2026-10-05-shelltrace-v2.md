@@ -1332,7 +1332,7 @@ Expected: all PASS, including 200 hypothesis examples. If the differential fails
   - `trace(g, entity_id, as_of, max_hops, authorities, mode="ownership", exclude=()) -> TraceResult | None`; raises `TraceUnavailable` when bounded path enumeration exceeds its candidate budget or a query fails/times out, so unavailable evidence cannot look like a clear trace
   - `trace_cypher(max_hops, mode, depth=None) -> str`; live trace evaluation queries exact hop depths from shortest to longest and applies the remaining candidate budget plus one as `LIMIT`
 
-The trace candidate-path budget is 1,000 across the zero-hop and bounded path probes. If a probe returns more than the remaining budget, or a database query fails/times out, `trace` raises `TraceUnavailable`; it returns `None` only after every eligible depth has been checked successfully without a qualifying path.
+The trace candidate-path budget is 1,000 across the zero-hop and bounded path probes. `trace` uses 80% of the configured tool deadline as one shared server-query budget and passes only the remaining time to each graph read. Each read uses a temporary FalkorDB client whose connect and response timeouts fit inside the actual remaining tool-call window; connect time is capped at 5% of the configured tool timeout, and response time is also capped by the configured query timeout. If a probe returns more than the remaining path budget, the shared server-query budget expires, or a database query fails/times out, `trace` raises `TraceUnavailable`; it returns `None` only after every eligible depth has been checked successfully without a qualifying path.
 
 - [x] **Step 1: Write the failing tests**
 
@@ -1390,14 +1390,14 @@ def trace_cypher(max_hops: int, mode: str, depth: int | None = None) -> str:
             "       pg.name AS program, d.listed_on AS listed_on\nLIMIT $path_limit")
 ```
 
-The live `trace(...)` probes zero-hop first, then calls `trace_cypher` at each exact hop depth from 1 through the clamped maximum, shortest first. Each query receives `path_limit = remaining_budget + 1`; the extra row detects overflow before choosing a path. The candidate budget covers all probes, and query failures/timeouts raise `TraceUnavailable`.
+The live `trace(...)` probes zero-hop first, then calls `trace_cypher` at each exact hop depth from 1 through the clamped maximum, shortest first. Each query receives `path_limit = remaining_budget + 1`; the extra row detects overflow before choosing a path. The candidate budget covers all probes. A shared 80% tool-call budget limits server reads, while per-read Redis connect/response timeouts fit inside the remaining wrapper window; failures or timeouts raise `TraceUnavailable`.
 
 The `trace(...)` body:
 1. Run the zero-hop check: `MATCH (t:Entity {id:$id}) {DES} RETURN t, d.k AS dk, …`. A hit returns a `TraceResult` with `hops=0` and one node. Apply `exclude` to the designation edge as well as every path edge.
 2. Otherwise probe exact hop depths in ascending order through `ro`. Map the FalkorDB `Node` and `Edge` objects to `TraceNode` and `TraceEdge`: properties `id`, `name`, `kind`, `country`; edge `k`, `pct`, `pct_basis`→`basis`, `role`, `valid_from`, `valid_to`, `src`, `src_record`. Resolve `from_id`/`to_id` from the `src_node`/`dest_node` internal IDs through the path's node list, as v1's `serialize_path` did.
 3. Put the `cypher` text and `latency_ms` on the result.
 
-- [x] **Step 4: Run the tests** → `ST_REQUIRE_DB=1 python -m pytest tests/test_trace.py -q` → 11 passed against pinned FalkorDB 6.0.2 (including explicit `TraceUnavailable` behavior for path-budget and query-timeout failures)
+- [x] **Step 4: Run the tests** → `ST_REQUIRE_DB=1 python -m pytest tests/test_trace.py -q` → 12 passed against pinned FalkorDB 6.0.2, including path-budget, graph-query, and shared-deadline failure handling
 - [x] **Step 5: Commit** → committed locally as `d49ee56` (`feat: dated alias-aware exposure trace`)
 
 ---
@@ -1495,7 +1495,7 @@ def score_pair(a: dict, b: dict) -> tuple[float, str, str]:
             if a[f] != b[f]:
                 return 0.0, "rejected", f"identifier_conflict:{f}"
             matches.append(f)
-    if a.get("reg_no") and b.get("reg_no") and a.get("country") == b.get("country"):
+    if a.get("reg_no") and b.get("reg_no") and a.get("country") and a.get("country") == b.get("country"):
         if a["reg_no"] != b["reg_no"]:
             return 0.0, "rejected", "identifier_conflict:reg_no"
         matches.append("reg_no")
@@ -1520,7 +1520,7 @@ How `generate_candidates(g)` works:
 2. Score every pair in each group, skipping pairs already joined by `SAME_AS` or already decided.
 3. Write the result:
    - `accepted` → `decide(..., accept=True, by="auto:identifier")`. If two established non-singleton clusters require analyst confirmation, store a `pending` candidate with reason `confirmation_required:cluster_merge` and confirmation-required features. If accepting would exceed the 25-entity cap, store a deterministic `rejected` candidate with reason `cluster_size_limit`; keep processing the remaining pairs.
-   - `pending` or `rejected` → `MERGE (a)-[c:CANDIDATE_SAME_AS {k:$k}]->(b) SET c.score=$s, c.state=$state, c.reason=$reason`, with `k = "cand:" + "|".join(sorted([a, b]))`.
+   - `pending` or `rejected` → atomically upsert `CANDIDATE_SAME_AS` with `k = "cand:" + "|".join(sorted([a, b]))`; preserve an existing analyst rejection and skip the upsert if an accepted `SAME_AS` link already exists, so stale candidate-generation snapshots cannot undo a decision.
    - `none` → write nothing.
 4. Return the counts by state.
 
@@ -1537,7 +1537,7 @@ For `touches_designated`, use `OPTIONAL MATCH (b)-[d:DESIGNATED]->(p:Program) WH
 4. On reject: set the candidate's `state='rejected'` and its `reason`.
 5. Return `{"accepted": bool, "canon": <canon of a after the change>}`.
 
-- [x] **Step 4: Run the tests** → `ST_REQUIRE_DB=1 python -m pytest tests/test_aliases.py -q` → 14 passed against pinned FalkorDB 6.0.2, including conflicting secondary identifiers, safe confirmation/cap handling, and concurrent acceptance at the hard cluster limit
+- [x] **Step 4: Run the tests** → `ST_REQUIRE_DB=1 python -m pytest tests/test_aliases.py -q` → 17 passed against pinned FalkorDB 6.0.2, including unknown-country registration numbers, concurrent decision preservation, identifier conflicts, safe confirmation/cap handling, and concurrent acceptance at the hard cluster limit
 - [x] **Step 5: Commit** → `git commit -m "feat: alias candidates, identifier-conflict rejection, chaining guard"`
 
 ---

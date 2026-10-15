@@ -86,8 +86,29 @@ def _ctx(as_of: str, exclude: tuple[str, ...], ignore_time: bool) -> dict[str, A
     return {"as_of": as_of, "exclude": list(exclude), "ignore_time": ignore_time}
 
 
-def canon_of(g, entity_id: str) -> str:
-    result = ro(g, "MATCH (e:Entity {id:$id}) RETURN e.canon AS c", {"id": entity_id})
+def canon_of(
+    g,
+    entity_id: str,
+    *,
+    timeout_ms: int | None = None,
+    socket_timeout_s: float | None = None,
+    socket_connect_timeout_s: float | None = None,
+) -> str:
+    query = "MATCH (e:Entity {id:$id}) RETURN e.canon AS c"
+    params = {"id": entity_id}
+    read_options = {
+        key: value
+        for key, value in {
+            "timeout_ms": timeout_ms,
+            "socket_timeout_s": socket_timeout_s,
+            "socket_connect_timeout_s": socket_connect_timeout_s,
+        }.items()
+        if value is not None
+    }
+    if not read_options:
+        result = ro(g, query, params)
+    else:
+        result = ro(g, query, params, **read_options)
     if not result:
         raise EntityNotFound(entity_id)
     return result[0]["c"]

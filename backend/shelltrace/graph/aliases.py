@@ -41,7 +41,14 @@ def score_pair(a: dict, b: dict) -> tuple[float, str, str]:
                 return 0.0, "rejected", f"identifier_conflict:{field}"
             matching_identifiers.append(field)
 
-    if a.get("reg_no") and b.get("reg_no") and a.get("country") == b.get("country"):
+    country_a, country_b = a.get("country"), b.get("country")
+    if (
+        a.get("reg_no")
+        and b.get("reg_no")
+        and country_a
+        and country_b
+        and country_a == country_b
+    ):
         if a["reg_no"] != b["reg_no"]:
             return 0.0, "rejected", "identifier_conflict:reg_no"
         matching_identifiers.append("reg_no")
@@ -165,27 +172,19 @@ def _store_candidate(
         "reason": reason,
         "features_json": json.dumps(features, sort_keys=True, separators=(",", ":")),
     }
-    existing = ro(
+    rw(
         g,
-        "MATCH (a:Entity {id:$a_id})-[c:CANDIDATE_SAME_AS]-(b:Entity {id:$b_id}) "
-        "RETURN c.k AS k",
+        "MATCH (a:Entity {id:$a_id}), (b:Entity {id:$b_id}) "
+        "OPTIONAL MATCH (a)-[same:SAME_AS]-(b) "
+        "WITH a, b, same WHERE same IS NULL "
+        "MERGE (a)-[c:CANDIDATE_SAME_AS]-(b) "
+        "WITH c, c.state = 'rejected' AS preserve_rejection "
+        "SET c.k=$k, c.score=CASE WHEN preserve_rejection THEN c.score ELSE $score END, "
+        "c.state=CASE WHEN preserve_rejection THEN c.state ELSE $state END, "
+        "c.reason=CASE WHEN preserve_rejection THEN c.reason ELSE $reason END, "
+        "c.features_json=CASE WHEN preserve_rejection THEN c.features_json ELSE $features_json END",
         params,
     )
-    if existing:
-        rw(
-            g,
-            "MATCH (a:Entity {id:$a_id})-[c:CANDIDATE_SAME_AS]-(b:Entity {id:$b_id}) "
-            "SET c.score=$score, c.state=$state, c.reason=$reason, c.features_json=$features_json",
-            params,
-        )
-    else:
-        rw(
-            g,
-            "MATCH (a:Entity {id:$a_id}), (b:Entity {id:$b_id}) "
-            "MERGE (a)-[c:CANDIDATE_SAME_AS {k:$k}]->(b) "
-            "SET c.score=$score, c.state=$state, c.reason=$reason, c.features_json=$features_json",
-            params,
-        )
 
 
 def generate_candidates(g) -> dict[str, int]:

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import time
+from math import ceil
+from time import monotonic
 from typing import Any
 
+from ..config import get_settings
 from ..db import ro
 from ..models import TraceEdge, TraceNode, TraceResult
 from .ownership import EntityNotFound, canon_of
@@ -11,10 +14,50 @@ from .ownership import EntityNotFound, canon_of
 OWN_RELS = "OWNS|CONTROLS|SAME_AS"
 CTX_RELS = "OWNS|CONTROLS|SAME_AS|OFFICER_OF|REGISTERED_AT"
 TRACE_PATH_CANDIDATE_BUDGET = 1_000
+TRACE_TOOL_BUDGET_FRACTION = 0.8
 
 
 class TraceUnavailable(RuntimeError):
     """The bounded trace could not be completed safely."""
+
+
+def _trace_deadlines() -> tuple[float, float]:
+    settings = get_settings()
+    started = monotonic()
+    return (
+        started + settings.tool_timeout_s * TRACE_TOOL_BUDGET_FRACTION,
+        started + settings.tool_timeout_s,
+    )
+
+
+def _remaining_socket_timeouts(wrapper_deadline: float) -> dict[str, float]:
+    settings = get_settings()
+    remaining_s = wrapper_deadline - monotonic()
+    if remaining_s <= 0:
+        raise TraceUnavailable("trace tool deadline exceeded")
+    query_timeout_s = getattr(settings, "query_timeout_ms", 2_000) / 1000
+    connect_timeout_s = min(
+        query_timeout_s,
+        settings.tool_timeout_s * 0.05,
+        remaining_s / 2,
+    )
+    socket_timeout_s = min(query_timeout_s, remaining_s - connect_timeout_s)
+    return {
+        "socket_timeout_s": socket_timeout_s,
+        "socket_connect_timeout_s": connect_timeout_s,
+    }
+
+
+def _remaining_timeout_ms(deadline: float) -> int:
+    remaining_s = deadline - monotonic()
+    if remaining_s <= 0:
+        raise TraceUnavailable("trace tool deadline exceeded")
+    return max(1, ceil(remaining_s * 1000))
+
+
+def _check_deadline(deadline: float) -> None:
+    if monotonic() >= deadline:
+        raise TraceUnavailable("trace tool deadline exceeded")
 
 ZERO_HOP_CYPHER = """
 MATCH (t:Entity {id:$id})-[d:DESIGNATED]->(pg:Program)
@@ -95,9 +138,49 @@ def trace(
     if mode not in {"ownership", "context"}:
         raise ValueError(f"unsupported trace mode: {mode}")
     started = time.perf_counter()
+    deadline, wrapper_deadline = _trace_deadlines()
     try:
-        canon_of(g, entity_id)
+        return _trace(
+            g,
+            entity_id,
+            as_of,
+            max_hops,
+            authorities,
+            mode,
+            exclude,
+            started,
+            deadline,
+            wrapper_deadline,
+        )
+    except (EntityNotFound, TraceUnavailable):
+        raise
+    except Exception as exc:
+        raise TraceUnavailable("trace query failed or timed out") from exc
+
+
+def _trace(
+    g,
+    entity_id: str,
+    as_of: str,
+    max_hops: int,
+    authorities: tuple[str, ...] | list[str],
+    mode: str,
+    exclude: tuple[str, ...],
+    started: float,
+    deadline: float,
+    wrapper_deadline: float,
+) -> TraceResult | None:
+    try:
+        canon_of(
+            g,
+            entity_id,
+            timeout_ms=_remaining_timeout_ms(deadline),
+            **_remaining_socket_timeouts(wrapper_deadline),
+        )
+        _check_deadline(deadline)
     except EntityNotFound:
+        raise
+    except TraceUnavailable:
         raise
     except Exception as exc:
         raise TraceUnavailable("trace query failed or timed out") from exc
@@ -114,8 +197,13 @@ def trace(
             g,
             ZERO_HOP_CYPHER,
             {**params, "path_limit": remaining + 1},
+            timeout_ms=_remaining_timeout_ms(deadline),
+            **_remaining_socket_timeouts(wrapper_deadline),
         )
+        _check_deadline(deadline)
     except Exception as exc:
+        if isinstance(exc, TraceUnavailable):
+            raise
         raise TraceUnavailable("trace query failed or timed out") from exc
     if len(direct) > remaining:
         raise TraceUnavailable(
@@ -129,6 +217,7 @@ def trace(
             key=lambda candidate: candidate["dk"],
         )
         node = _trace_node(row["t"])
+        _check_deadline(deadline)
         return TraceResult(
             hops=0,
             nodes=[node],
@@ -152,8 +241,13 @@ def trace(
                 g,
                 query,
                 {**params, "path_limit": remaining + 1},
+                timeout_ms=_remaining_timeout_ms(deadline),
+                **_remaining_socket_timeouts(wrapper_deadline),
             )
+            _check_deadline(deadline)
         except Exception as exc:
+            if isinstance(exc, TraceUnavailable):
+                raise
             raise TraceUnavailable("trace query failed or timed out") from exc
         if len(paths) > remaining:
             raise TraceUnavailable(
@@ -173,6 +267,7 @@ def trace(
             break
 
     if selected_path is None:
+        _check_deadline(deadline)
         return None
 
     row = selected_path
@@ -181,6 +276,7 @@ def trace(
         node.id: trace_node.id for node, trace_node in zip(row["ns"], nodes)
     }
     edges = [_trace_edge(edge, entity_ids) for edge in row["rs"]]
+    _check_deadline(deadline)
     return TraceResult(
         hops=row["hops"],
         nodes=nodes,

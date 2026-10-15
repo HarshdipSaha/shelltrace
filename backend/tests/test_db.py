@@ -79,6 +79,55 @@ def test_store_timeout_setting_updates_ro_timeout_and_is_restored():
     assert default_graph.timeout == original_timeout == 2000
 
 
+def test_graph_with_socket_timeout_uses_and_closes_a_bounded_client():
+    from shelltrace.db import graph_with_socket_timeout
+
+    class FakePool:
+        connection_class = object
+
+        def __init__(self, connection_class=object, **kwargs):
+            self.connection_class = connection_class
+            self.connection_kwargs = kwargs
+            self.disconnected = False
+
+        def disconnect(self):
+            self.disconnected = True
+
+    class FakeRedisClient:
+        def __init__(self, connection_pool):
+            self.connection_pool = connection_pool
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    class FakeFalkorDBClient:
+        def __init__(self, connection):
+            self.connection = connection
+
+    class FakeGraph:
+        def __init__(self, client, name):
+            self.client = client
+            self.name = name
+
+    original = FakeGraph(
+        FakeFalkorDBClient(FakeRedisClient(FakePool(socket_timeout=None))),
+        "trace_graph",
+    )
+    with graph_with_socket_timeout(
+        original, socket_timeout_s=0.2, socket_connect_timeout_s=0.1
+    ) as bounded:
+        assert bounded is not original
+        assert bounded.name == "trace_graph"
+        assert bounded.client.connection_pool.connection_kwargs["socket_timeout"] == 0.2
+        assert bounded.client.connection_pool.connection_kwargs["socket_connect_timeout"] == 0.1
+        bounded_client = bounded.client
+        bounded_pool = bounded.client.connection_pool
+
+    assert bounded_client.closed
+    assert bounded_pool.disconnected
+
+
 def test_read_helper_returns_golden_entity_as_dicts(store, golden_ws):
     graph = store.workspace(golden_ws)
     assert ro(

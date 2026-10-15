@@ -68,6 +68,22 @@ def test_reg_no_conflict_overrides_another_identifier_match_only_in_same_country
     assert different_countries[1:] == ("accepted", "identifier_match:lei")
 
 
+def test_reg_no_is_not_compared_without_known_matching_countries():
+    different_registrations = score_pair(
+        E(name="Alpha Limited", reg_no="R1"),
+        E(name="Alpha Limited", reg_no="R2"),
+    )
+    same_registration = score_pair(
+        E(name="Alpha Limited", reg_no="R1"),
+        E(name="Alpha Limited", reg_no="R1"),
+    )
+
+    assert different_registrations[1] == "pending"
+    assert different_registrations[2] == "name_core_match"
+    assert same_registration[1] == "pending"
+    assert same_registration[2] == "name_core_match"
+
+
 def test_candidate_generation_is_idempotent_and_keeps_candidates_separate(
     store,
 ):
@@ -105,6 +121,91 @@ def test_candidate_generation_is_idempotent_and_keeps_candidates_separate(
             graph,
             "MATCH (a:Entity {id:'c_bluelagoon'})-[r:SAME_AS]-(b:Entity {id:'c_bluelagoon_alias'}) "
             "RETURN count(r) AS n",
+        )[0]["n"] == 2
+    finally:
+        store.drop(workspace)
+
+
+def test_candidate_generation_cannot_reopen_a_concurrent_analyst_rejection(
+    store, monkeypatch
+):
+    workspace = fresh(store)
+    graph = store.workspace(workspace)
+    original_store_candidate = aliases_module._store_candidate
+    injected_rejection = False
+
+    def reject_after_snapshot(g, a_id, b_id, score, state, reason, features):
+        nonlocal injected_rejection
+        if (
+            not injected_rejection
+            and {a_id, b_id} == {"c_ion_holdings", "c_ion_alias"}
+            and state == "pending"
+        ):
+            injected_rejection = True
+            decide(
+                g,
+                "c_ion_holdings",
+                "c_ion_alias",
+                accept=False,
+                by="analyst_1",
+                reason="analyst confirmed these are distinct",
+            )
+        original_store_candidate(g, a_id, b_id, score, state, reason, features)
+
+    monkeypatch.setattr(aliases_module, "_store_candidate", reject_after_snapshot)
+    try:
+        generate_candidates(graph)
+
+        candidate = next(
+            item
+            for item in list_candidates(graph, "c_ion_holdings")
+            if item.b_id == "c_ion_alias"
+        )
+        assert injected_rejection
+        assert (candidate.state, candidate.reason) == (
+            "rejected",
+            "analyst confirmed these are distinct",
+        )
+    finally:
+        store.drop(workspace)
+
+
+def test_candidate_generation_cannot_restore_a_concurrently_accepted_alias(
+    store, monkeypatch
+):
+    workspace = fresh(store)
+    graph = store.workspace(workspace)
+    original_store_candidate = aliases_module._store_candidate
+    injected_acceptance = False
+
+    def accept_after_snapshot(g, a_id, b_id, score, state, reason, features):
+        nonlocal injected_acceptance
+        if (
+            not injected_acceptance
+            and {a_id, b_id} == {"c_ion_holdings", "c_ion_alias"}
+            and state == "pending"
+        ):
+            injected_acceptance = True
+            decide(
+                g,
+                "c_ion_holdings",
+                "c_ion_alias",
+                accept=True,
+                by="analyst_1",
+                reason="analyst confirmed common registry records",
+            )
+        original_store_candidate(g, a_id, b_id, score, state, reason, features)
+
+    monkeypatch.setattr(aliases_module, "_store_candidate", accept_after_snapshot)
+    try:
+        generate_candidates(graph)
+
+        assert injected_acceptance
+        assert list_candidates(graph, "c_ion_holdings") == []
+        assert ro(
+            graph,
+            "MATCH (a:Entity {id:'c_ion_holdings'})-[r:SAME_AS]-"
+            "(b:Entity {id:'c_ion_alias'}) RETURN count(r) AS n",
         )[0]["n"] == 2
     finally:
         store.drop(workspace)

@@ -96,14 +96,76 @@ def rows(result: Any) -> list[dict[str, Any]]:
     return [dict(zip(columns, row)) for row in values]
 
 
-def ro(g: Graph, cypher: str, params: dict | None = None) -> list[dict]:
+def ro(
+    g: Graph,
+    cypher: str,
+    params: dict | None = None,
+    *,
+    timeout_ms: int | None = None,
+    socket_timeout_s: float | None = None,
+    socket_connect_timeout_s: float | None = None,
+) -> list[dict]:
     """Run a query through FalkorDB's server-enforced read-only API."""
-    return rows(g.ro_query(cypher, params or {}, timeout=_TIMEOUT_MS))
+    timeout = (
+        _TIMEOUT_MS
+        if timeout_ms is None
+        else max(1, min(_TIMEOUT_MS, int(timeout_ms)))
+    )
+    if socket_timeout_s is None and socket_connect_timeout_s is None:
+        return rows(g.ro_query(cypher, params or {}, timeout=timeout))
+    with graph_with_socket_timeout(
+        g,
+        socket_timeout_s=socket_timeout_s,
+        socket_connect_timeout_s=socket_connect_timeout_s,
+    ) as bounded_graph:
+        return rows(bounded_graph.ro_query(cypher, params or {}, timeout=timeout))
 
 
 def rw(g: Graph, cypher: str, params: dict | None = None) -> list[dict]:
     """Run a trusted application query that may mutate the graph."""
     return rows(g.query(cypher, params or {}))
+
+
+@contextmanager
+def graph_with_socket_timeout(
+    g: Graph,
+    *,
+    socket_timeout_s: float | None,
+    socket_connect_timeout_s: float | None,
+):
+    """Use a temporary client with bounded transport waits for a read operation."""
+    try:
+        client = g.client
+        redis_client = getattr(client, "connection", client)
+        pool = redis_client.connection_pool
+        pool_kwargs = dict(pool.connection_kwargs)
+    except AttributeError:
+        # Lightweight graph doubles and guarded graph proxies may not expose a
+        # Redis client. Their query methods still enforce the server timeout.
+        yield g
+        return
+
+    if socket_timeout_s is not None:
+        pool_kwargs["socket_timeout"] = socket_timeout_s
+    if socket_connect_timeout_s is not None:
+        pool_kwargs["socket_connect_timeout"] = socket_connect_timeout_s
+    try:
+        bounded_pool = type(pool)(
+            connection_class=pool.connection_class,
+            **pool_kwargs,
+        )
+        bounded_client = type(redis_client)(connection_pool=bounded_pool)
+        bounded_graph = type(g)(bounded_client, g.name)
+    except Exception as exc:
+        raise RuntimeError("could not create a graph client with bounded socket waits") from exc
+
+    try:
+        yield bounded_graph
+    finally:
+        try:
+            bounded_client.close()
+        finally:
+            bounded_pool.disconnect()
 
 
 class GraphStore:

@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -136,3 +137,53 @@ def test_trace_query_failure_is_explicitly_unavailable(store, golden_ws, monkeyp
 
     with pytest.raises(TraceUnavailable, match="trace query failed"):
         trace(store.workspace(golden_ws), "c_nordharbor", "2024-01-01", 6, ALL)
+
+
+def test_trace_stops_before_exceeding_tool_deadline(monkeypatch):
+    clock = {"now": 0.0}
+    query_timeouts = []
+    socket_timeouts = []
+
+    monkeypatch.setattr(
+        trace_module,
+        "get_settings",
+        lambda: SimpleNamespace(tool_timeout_s=2.0),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        trace_module, "monotonic", lambda: clock["now"], raising=False
+    )
+
+    def entity_exists(
+        _graph,
+        _entity_id,
+        *,
+        timeout_ms=None,
+        socket_timeout_s=None,
+        socket_connect_timeout_s=None,
+    ):
+        assert timeout_ms is not None and timeout_ms <= 1600
+        socket_timeouts.append((socket_timeout_s, socket_connect_timeout_s))
+
+    def slow_zero_hop(
+        _graph,
+        _cypher,
+        _params=None,
+        *,
+        timeout_ms=None,
+        socket_timeout_s=None,
+        socket_connect_timeout_s=None,
+    ):
+        query_timeouts.append(timeout_ms)
+        socket_timeouts.append((socket_timeout_s, socket_connect_timeout_s))
+        clock["now"] = 1.7
+        return []
+
+    monkeypatch.setattr(trace_module, "canon_of", entity_exists)
+    monkeypatch.setattr(trace_module, "ro", slow_zero_hop)
+
+    with pytest.raises(TraceUnavailable, match="deadline"):
+        trace(object(), "target", "2024-01-01", 6, ALL)
+
+    assert query_timeouts == [1600]
+    assert socket_timeouts == [(1.9, 0.1), (1.9, 0.1)]
