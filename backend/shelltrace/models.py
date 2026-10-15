@@ -106,6 +106,9 @@ class RedFlag(Strict):
     entity_ids: list[str]
     evidence_keys: list[str]
     detail: str
+    evidence_status: Literal["complete", "truncated", "unavailable"] | None = None
+    entity_count: int | None = None
+    evidence_count: int | None = None
 
 
 class AliasCandidate(Strict):
