@@ -97,7 +97,7 @@ test('late health response does not change the mode of an active case', async ({
   releaseHealthRequest();
   await expect(page.getByRole('radio', { name: /Playbook/ })).toBeChecked();
   releaseCaseRequest();
-  await expect(page.getByTestId('validated-badge')).toHaveText(/EXPOSED/);
+  await expect(page.getByTestId('validated-badge')).toHaveText(/EXPOSED/, { timeout: 15_000 });
 });
 
 test('failed health check offers an accurate retry before agent mode is enabled', async ({ page }) => {

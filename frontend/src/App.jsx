@@ -1,12 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { health, openCase } from './api.js';
+import { decideAlias, draftReport, getCase, health, injectDesignation, openCase, review, screenName, setWatch } from './api.js';
+import AliasPanel from './components/AliasPanel.jsx';
 import CaseHeader from './components/CaseHeader.jsx';
 import EvidenceGraph from './components/EvidenceGraph.jsx';
 import EvidenceLocker from './components/EvidenceLocker.jsx';
+import EvalPage from './components/EvalPage.jsx';
+import NameScreen from './components/NameScreen.jsx';
+import Notifications from './components/Notifications.jsx';
+import ReportPanel from './components/ReportPanel.jsx';
+import ReviewPanel from './components/ReviewPanel.jsx';
 import RulePackPanel from './components/RulePackPanel.jsx';
 import SearchPanel from './components/SearchPanel.jsx';
 import TimeSlider from './components/TimeSlider.jsx';
 import Timeline from './components/Timeline.jsx';
+import WatchBar from './components/WatchBar.jsx';
 
 const INITIAL_FORM = {
   workspace: 'demo',
@@ -17,15 +24,26 @@ const INITIAL_FORM = {
 };
 
 function App() {
-  const [form, setForm] = useState(INITIAL_FORM);
+  const [form, setForm] = useState(() => ({
+    ...INITIAL_FORM,
+    workspace: new URLSearchParams(window.location.search).get('ws') || INITIAL_FORM.workspace,
+  }));
   const [entity, setEntity] = useState(null);
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [service, setService] = useState({ loading: true, health: null, error: '' });
   const [selected, setSelected] = useState(null);
+  const [route, setRoute] = useState(window.location.hash);
+  const [notificationRefresh, setNotificationRefresh] = useState(0);
   const caseRequestId = useRef(0);
   const healthRequestId = useRef(0);
+
+  useEffect(() => {
+    const updateRoute = () => setRoute(window.location.hash);
+    window.addEventListener('hashchange', updateRoute);
+    return () => window.removeEventListener('hashchange', updateRoute);
+  }, []);
 
   const checkHealth = useCallback(async () => {
     const requestId = ++healthRequestId.current;
@@ -101,6 +119,69 @@ function App() {
   }, [entity, form]);
 
   const changeCaseDate = useCallback((asOf) => runCase({ asOf }), [runCase]);
+  const submitReview = useCallback((body) => {
+    if (!result) throw new Error('Open a case before recording a review.');
+    return review(form.workspace, result.case_id, body);
+  }, [form.workspace, result]);
+  const createReport = useCallback(() => {
+    if (!result) throw new Error('Open a case before drafting a report.');
+    return draftReport(form.workspace, result.case_id);
+  }, [form.workspace, result]);
+  const toggleWatch = useCallback((active) => {
+    if (!result) throw new Error('Open a case before setting a watch.');
+    return setWatch(form.workspace, result.case_id, active);
+  }, [form.workspace, result]);
+  const addDesignation = useCallback(async (body) => {
+    const outcome = await injectDesignation({ ...body, workspace: form.workspace });
+    setNotificationRefresh((value) => value + 1);
+    return outcome;
+  }, [form.workspace]);
+  const runNameScreen = useCallback(() => {
+    if (!result) throw new Error('Open a case before screening its name.');
+    return screenName({
+      workspace: form.workspace,
+      entity_id: result.entity.id,
+      as_of: result.as_of,
+      rulepacks: result.rulepacks,
+    });
+  }, [form.workspace, result]);
+  const decideAliasAndRefresh = useCallback(async (candidate, accept, reason, confirmMerge) => {
+    await decideAlias(form.workspace, {
+      a_id: candidate.a_id,
+      b_id: candidate.b_id,
+      accept,
+      by: 'analyst-1',
+      reason,
+      confirm_merge: confirmMerge,
+    });
+    await runCase();
+  }, [form.workspace, runCase]);
+  const openNotificationCase = useCallback(async (item) => {
+    const caseId = item.diff?.new_case_id || item.new_case_id || item.case_id;
+    const requestId = ++caseRequestId.current;
+    setLoading(true);
+    setError('');
+    try {
+      const nextCase = await getCase(form.workspace, caseId);
+      if (caseRequestId.current !== requestId) return;
+      setResult(nextCase);
+      setEntity(nextCase.entity);
+      setSelected(null);
+      setForm((current) => ({
+        ...current,
+        asOf: nextCase.as_of,
+        maxHops: nextCase.max_hops,
+        packs: nextCase.rulepacks,
+        mode: nextCase.mode,
+      }));
+    } catch (cause) {
+      if (caseRequestId.current === requestId) setError(cause?.message || 'The changed case could not be loaded.');
+    } finally {
+      if (caseRequestId.current === requestId) setLoading(false);
+    }
+  }, [form.workspace]);
+
+  if (route === '#/eval') return <EvalPage workspace={form.workspace} />;
 
   return (
     <div className="app-shell">
@@ -113,6 +194,7 @@ function App() {
           <span>INVESTIGATION WORKSPACE</span>
           <strong>Sanctions exposure review</strong>
         </div>
+        <a className="evaluation-link" href="#/eval">Evaluation</a>
         <div className="service-status" aria-live="polite">
           <span className={`status-dot ${service.health?.status === 'ok' ? 'status-dot--live' : ''}`} />
           <span>{service.loading ? 'Connecting to graph' : service.health?.status === 'ok' ? 'Graph connected' : 'Graph unavailable'}</span>
@@ -164,6 +246,8 @@ function App() {
             onRetryHealth={checkHealth}
           />
           <Timeline result={result} selected={selected} onSelect={setSelected} />
+          <WatchBar workspace={form.workspace} result={result} onWatch={toggleWatch} onInject={addDesignation} />
+          <Notifications workspace={form.workspace} refreshSignal={notificationRefresh} onOpenCase={openNotificationCase} />
         </aside>
 
         <main className="main-column">
@@ -226,6 +310,10 @@ function App() {
           </section>
 
           <RulePackPanel result={result} />
+          <NameScreen result={result} onScreen={runNameScreen} />
+          <AliasPanel result={result} onDecide={decideAliasAndRefresh} />
+          <ReportPanel result={result} onDraft={createReport} onSelect={setSelected} />
+          <ReviewPanel result={result} onSubmit={submitReview} />
           <EvidenceLocker result={result} selectedKey={selected} />
 
           <section className="context-card context-card--quiet">
