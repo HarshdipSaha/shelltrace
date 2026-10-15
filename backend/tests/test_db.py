@@ -79,6 +79,415 @@ def test_store_timeout_setting_updates_ro_timeout_and_is_restored():
     assert default_graph.timeout == original_timeout == 2000
 
 
+def test_graph_with_socket_timeout_uses_and_closes_a_bounded_client():
+    from shelltrace.db import graph_with_socket_timeout
+
+    class FakePool:
+        connection_class = object
+
+        def __init__(self, connection_class=object, **kwargs):
+            self.connection_class = connection_class
+            self.connection_kwargs = kwargs
+            self.disconnected = False
+
+        def disconnect(self):
+            self.disconnected = True
+
+    class FakeRedisClient:
+        def __init__(self, connection_pool):
+            self.connection_pool = connection_pool
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    class FakeFalkorDBClient:
+        def __init__(self, connection):
+            self.connection = connection
+
+    class FakeGraph:
+        def __init__(self, client, name):
+            self.client = client
+            self.name = name
+
+    original = FakeGraph(
+        FakeFalkorDBClient(FakeRedisClient(FakePool(socket_timeout=None))),
+        "trace_graph",
+    )
+    with graph_with_socket_timeout(
+        original, socket_timeout_s=0.2, socket_connect_timeout_s=0.1
+    ) as bounded:
+        assert bounded is not original
+        assert bounded.name == "trace_graph"
+        assert bounded.client.connection_pool.connection_kwargs["socket_timeout"] == 0.2
+        assert bounded.client.connection_pool.connection_kwargs["socket_connect_timeout"] == 0.1
+        bounded_client = bounded.client
+        bounded_pool = bounded.client.connection_pool
+
+    assert bounded_client.closed
+    assert bounded_pool.disconnected
+
+
+def test_timed_out_connection_cannot_issue_a_late_query():
+    from threading import Event, Thread
+
+    from shelltrace.db import graph_with_socket_timeout
+
+    connection_started = Event()
+    finish_connect = Event()
+    cancelled = Event()
+    errors = []
+
+    class SlowConnection:
+        def __init__(self):
+            self.disconnected = False
+
+        def connect(self):
+            connection_started.set()
+            finish_connect.wait(timeout=2)
+
+        def disconnect(self):
+            self.disconnected = True
+
+    class FakePool:
+        connection_class = SlowConnection
+
+        def __init__(self, connection_class=SlowConnection, **kwargs):
+            self.connection_class = connection_class
+            self.connection_kwargs = kwargs
+            self.disconnected = False
+
+        def disconnect(self):
+            self.disconnected = True
+
+    class FakeRedisClient:
+        def __init__(self, connection_pool):
+            self.connection_pool = connection_pool
+
+        def close(self):
+            pass
+
+    class FakeFalkorDBClient:
+        def __init__(self, connection):
+            self.connection = connection
+
+    class FakeGraph:
+        def __init__(self, client, name):
+            self.client = client
+            self.name = name
+
+    original = FakeGraph(
+        FakeFalkorDBClient(FakeRedisClient(FakePool())), "trace_graph"
+    )
+    try:
+        with graph_with_socket_timeout(
+            original,
+            socket_timeout_s=0.2,
+            socket_connect_timeout_s=0.1,
+            cancellation_event=cancelled,
+        ) as bounded:
+            connection = bounded.client.connection_pool.connection_class()
+
+            def connect():
+                try:
+                    connection.connect()
+                except Exception as exc:
+                    errors.append(exc)
+
+            worker = Thread(target=connect, daemon=True)
+            worker.start()
+            assert connection_started.wait(timeout=0.5)
+            cancelled.set()
+            finish_connect.set()
+            worker.join(timeout=0.5)
+
+            assert not worker.is_alive()
+            assert errors and "cancelled during connection" in str(errors[0])
+            assert connection.disconnected
+    finally:
+        finish_connect.set()
+
+
+def test_cancelled_connection_cannot_send_after_connect():
+    from threading import Event
+
+    from shelltrace.db import graph_with_socket_timeout
+
+    cancelled = Event()
+    sent_commands = []
+
+    class FakeConnection:
+        def connect(self):
+            pass
+
+        def disconnect(self):
+            pass
+
+        def send_packed_command(self, command, check_health=True):
+            sent_commands.append(command)
+
+    class FakePool:
+        connection_class = FakeConnection
+
+        def __init__(self, connection_class=FakeConnection, **kwargs):
+            self.connection_class = connection_class
+            self.connection_kwargs = kwargs
+
+        def disconnect(self):
+            pass
+
+    class FakeRedisClient:
+        def __init__(self, connection_pool):
+            self.connection_pool = connection_pool
+
+        def close(self):
+            pass
+
+    class FakeFalkorDBClient:
+        def __init__(self, connection):
+            self.connection = connection
+
+    class FakeGraph:
+        def __init__(self, client, name):
+            self.client = client
+            self.name = name
+
+    original = FakeGraph(
+        FakeFalkorDBClient(FakeRedisClient(FakePool())), "trace_graph"
+    )
+    with graph_with_socket_timeout(
+        original,
+        socket_timeout_s=0.2,
+        socket_connect_timeout_s=0.1,
+        cancellation_event=cancelled,
+    ) as bounded:
+        connection = bounded.client.connection_pool.connection_class()
+        connection.connect()
+        cancelled.set()
+        with pytest.raises(TimeoutError, match="cancelled before command send"):
+            connection.send_packed_command(b"QUERY")
+
+    assert sent_commands == []
+
+
+def test_dispatch_gate_cancels_new_sends_without_waiting_for_in_flight_send():
+    from threading import Event, Thread
+
+    from shelltrace.db import _ReadDispatchGate
+
+    gate = _ReadDispatchGate()
+    send_started = Event()
+    finish_send = Event()
+    results = []
+
+    def send():
+        send_started.set()
+        finish_send.wait(timeout=2)
+        return "sent"
+
+    worker = Thread(target=lambda: results.append(gate.dispatch(send)), daemon=True)
+    worker.start()
+    try:
+        assert send_started.wait(timeout=0.5)
+        began = monotonic()
+        gate.cancel()
+        assert monotonic() - began < 0.1
+        with pytest.raises(TimeoutError, match="cancelled"):
+            gate.dispatch(lambda: "late send")
+    finally:
+        finish_send.set()
+        worker.join(timeout=0.5)
+
+    assert not worker.is_alive()
+    assert results == ["sent"]
+
+
+def test_dispatch_gate_rejects_sends_after_deadline_before_timeout_worker_runs():
+    from shelltrace.db import _ReadDispatchGate
+
+    gate = _ReadDispatchGate(deadline=monotonic() - 0.001)
+    sent_commands = []
+
+    with pytest.raises(TimeoutError, match="cancelled"):
+        gate.dispatch(lambda: sent_commands.append("late query"))
+
+    assert sent_commands == []
+
+
+def test_ro_abandons_a_stalled_read_at_wall_deadline():
+    from threading import Event
+
+    started = Event()
+    release = Event()
+
+    class SlowGraph:
+        def ro_query(self, cypher, params, timeout):
+            started.set()
+            release.wait(timeout=2)
+
+            class Result:
+                header = []
+                result_set = []
+
+            return Result()
+
+    began = monotonic()
+    try:
+        with pytest.raises(TimeoutError, match="wall-clock deadline"):
+            ro(SlowGraph(), "RETURN 1", wall_deadline=began + 0.05)
+        assert started.is_set()
+        assert monotonic() - began < 0.5
+    finally:
+        release.set()
+
+
+def test_timed_out_guarded_graph_cannot_issue_a_late_query():
+    from threading import Event
+
+    from shelltrace.db import _GuardedGraph
+
+    connection_started = Event()
+    finish_connect = Event()
+    connection_disconnected = Event()
+    query_started = Event()
+    guard_checks = []
+
+    class SlowConnection:
+        def connect(self):
+            connection_started.set()
+            finish_connect.wait(timeout=2)
+
+        def disconnect(self):
+            connection_disconnected.set()
+
+    class FakePool:
+        connection_class = SlowConnection
+
+        def __init__(self, connection_class=SlowConnection, **kwargs):
+            self.connection_class = connection_class
+            self.connection_kwargs = kwargs
+
+        def disconnect(self):
+            pass
+
+    class FakeRedisClient:
+        def __init__(self, connection_pool):
+            self.connection_pool = connection_pool
+
+        def close(self):
+            pass
+
+    class FakeFalkorDBClient:
+        def __init__(self, connection):
+            self.connection = connection
+
+    class FakeGraph:
+        def __init__(self, client, name):
+            self.client = client
+            self.name = name
+
+        def ro_query(self, cypher, params, timeout):
+            client = getattr(self.client, "connection", self.client)
+            connection_class = client.connection_pool.connection_class
+            connection_class().connect()
+            query_started.set()
+
+    original = FakeGraph(
+        FakeFalkorDBClient(FakeRedisClient(FakePool())), "trace_graph"
+    )
+    guarded = _GuardedGraph(
+        original, lambda connection=None: guard_checks.append(True)
+    )
+    try:
+        with pytest.raises(TimeoutError, match="wall-clock deadline"):
+            ro(guarded, "RETURN 1", wall_deadline=monotonic() + 0.15)
+
+        assert connection_started.wait(timeout=0.5)
+        finish_connect.set()
+        assert connection_disconnected.wait(timeout=0.5)
+        assert not query_started.is_set()
+        assert guard_checks
+    finally:
+        finish_connect.set()
+
+
+def test_timed_out_guarded_lease_check_cannot_issue_a_late_query():
+    from threading import Event
+
+    from shelltrace.db import _GuardedGraph
+
+    connection_started = Event()
+    finish_connect = Event()
+    connection_disconnected = Event()
+    graph_query_started = Event()
+    checked_connections = []
+
+    class SlowConnection:
+        def connect(self):
+            connection_started.set()
+            finish_connect.wait(timeout=2)
+
+        def disconnect(self):
+            connection_disconnected.set()
+
+    class FakePool:
+        connection_class = SlowConnection
+
+        def __init__(self, connection_class=SlowConnection, **kwargs):
+            self.connection_class = connection_class
+            self.connection_kwargs = kwargs
+
+        def disconnect(self):
+            pass
+
+    class FakeRedisClient:
+        def __init__(self, connection_pool):
+            self.connection_pool = connection_pool
+
+        def get(self, key):
+            self.connection_pool.connection_class().connect()
+            return b"token"
+
+        def close(self):
+            pass
+
+    class FakeFalkorDBClient:
+        def __init__(self, connection):
+            self.connection = connection
+
+    class FakeGraph:
+        def __init__(self, client, name):
+            self.client = client
+            self.name = name
+
+        def ro_query(self, cypher, params, timeout):
+            graph_query_started.set()
+
+    original_connection = FakeRedisClient(FakePool())
+    original = FakeGraph(
+        FakeFalkorDBClient(original_connection), "trace_graph"
+    )
+
+    def ensure_lock(connection=None):
+        checked_connections.append(connection)
+        redis_connection = connection or original_connection
+        if redis_connection.get("lock") != b"token":
+            raise TimeoutError("Lost graph lock")
+
+    guarded = _GuardedGraph(original, ensure_lock)
+    try:
+        with pytest.raises(TimeoutError, match="wall-clock deadline"):
+            ro(guarded, "RETURN 1", wall_deadline=monotonic() + 0.15)
+
+        assert connection_started.wait(timeout=0.5)
+        finish_connect.set()
+        assert connection_disconnected.wait(timeout=0.5)
+        assert checked_connections and checked_connections[0] is not original_connection
+        assert not graph_query_started.is_set()
+    finally:
+        finish_connect.set()
+
+
 def test_read_helper_returns_golden_entity_as_dicts(store, golden_ws):
     graph = store.workspace(golden_ws)
     assert ro(

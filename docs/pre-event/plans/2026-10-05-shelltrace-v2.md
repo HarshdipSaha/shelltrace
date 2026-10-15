@@ -1329,10 +1329,12 @@ Expected: all PASS, including 200 hypothesis examples. If the differential fails
 **Interfaces:**
 - Consumes: `ro`, `TraceResult`, `TraceNode`, `TraceEdge`, `canon_of`
 - Produces:
-  - `trace(g, entity_id, as_of, max_hops, authorities, mode="ownership", exclude=()) -> TraceResult | None`
-  - `trace_cypher(max_hops, mode) -> str`
+  - `trace(g, entity_id, as_of, max_hops, authorities, mode="ownership", exclude=()) -> TraceResult | None`; raises `TraceUnavailable` when bounded path enumeration exceeds its candidate budget or a query fails/times out, so unavailable evidence cannot look like a clear trace
+  - `trace_cypher(max_hops, mode, depth=None) -> str`; live trace evaluation queries exact hop depths from shortest to longest and applies the remaining candidate budget plus one as `LIMIT`
 
-- [ ] **Step 1: Write the failing tests**
+The trace candidate-path budget is 1,000 across the zero-hop and bounded path probes. `trace` uses 80% of the configured tool deadline as one shared server-query budget and passes only the remaining time to each graph read. Each read uses a temporary FalkorDB client with connect and response timeouts that fit inside 90% of the configured tool window, plus a wall-clock guard that disconnects the temporary client and raises when that window expires. On lease-guarded graphs, the lease check uses the same temporary client, so its connection and response waits are bounded too. The cancellation gate prevents a delayed connection or a send that has not claimed dispatch from starting a query after expiry; it marks cancellation and disconnects the pool without waiting for a send already in flight. A bounded worker pool limits resolver calls that cannot be interrupted. Connect time is capped at 5% of the configured tool timeout, and response time is also capped by the configured query timeout. If a probe returns more than the remaining path budget, the shared server-query budget expires, or a database query fails/times out, `trace` raises `TraceUnavailable`; it returns `None` only after every eligible depth has been checked successfully without a qualifying path.
+
+- [x] **Step 1: Write the failing tests**
 
 ```python
 from shelltrace.graph.trace import trace
@@ -1366,34 +1368,37 @@ def test_context_mode_reaches_officer_links(store, golden_ws):
     assert t is not None and any(e.type == "OFFICER_OF" for e in t.edges)
 ```
 
-- [ ] **Step 2: Run them to verify they fail** → FAIL
+- [x] **Step 2: Run them to verify they fail** → FAIL (collection fails because `graph.trace` does not exist)
 
-- [ ] **Step 3: Implement `trace.py`.** `SAME_AS` is stored in both directions, so a directed pattern from the designated party down to the target is alias-aware. The validity predicate sits inside `all(...)`, never as a post-filter on `shortestPath`.
+- [x] **Step 3: Implement `trace.py`.** `SAME_AS` is stored in both directions, so a directed pattern from the designated party down to the target is alias-aware. The validity predicate sits inside `all(...)`, never as a post-filter on `shortestPath`.
 
 ```python
 OWN_RELS, CTX_RELS = "OWNS|CONTROLS|SAME_AS", "OWNS|CONTROLS|SAME_AS|OFFICER_OF|REGISTERED_AT"
-DES = ("MATCH (t)-[d:DESIGNATED]->(pg:Program) WHERE pg.authority IN $auth AND d.listed_on <= $as_of "
-       "AND (d.delisted_on IS NULL OR d.delisted_on > $as_of)")
+DES = ("MATCH (t)-[d:DESIGNATED]->(pg:Program) WHERE pg.authority IN $auth AND NOT d.k IN $exclude "
+       "AND d.listed_on <= $as_of AND (d.delisted_on IS NULL OR d.delisted_on > $as_of)")
 
-def trace_cypher(max_hops: int, mode: str) -> str:
+def trace_cypher(max_hops: int, mode: str, depth: int | None = None) -> str:
     h = max(1, min(6, int(max_hops)))
-    pattern = (f"(t:Entity)-[:{OWN_RELS}*1..{h}]->(s:Entity {{id:$id}})" if mode == "ownership"
-               else f"(t:Entity)-[:{CTX_RELS}*1..{h}]-(s:Entity {{id:$id}})")
+    length = f"*{depth}" if depth is not None else f"*1..{h}"
+    pattern = (f"(t:Entity)-[:{OWN_RELS}{length}]->(s:Entity {{id:$id}})" if mode == "ownership"
+               else f"(t:Entity)-[:{CTX_RELS}{length}]-(s:Entity {{id:$id}})")
     return (f"MATCH p = {pattern}\n"
             "WHERE t <> s AND all(r IN relationships(p) WHERE NOT r.k IN $exclude\n"
             "  AND (r.valid_from IS NULL OR r.valid_from <= $as_of) AND (r.valid_to IS NULL OR r.valid_to >= $as_of))\n"
             f"{DES}\n"
             "RETURN nodes(p) AS ns, relationships(p) AS rs, length(p) AS hops, d.k AS dk, pg.authority AS authority,\n"
-            "       pg.name AS program, d.listed_on AS listed_on\nORDER BY hops ASC LIMIT 1")
+            "       pg.name AS program, d.listed_on AS listed_on\nLIMIT $path_limit")
 ```
 
+The live `trace(...)` probes zero-hop first, then calls `trace_cypher` at each exact hop depth from 1 through the clamped maximum, shortest first. Each query receives `path_limit = remaining_budget + 1`; the extra row detects overflow before choosing a path. The candidate budget covers all probes. A shared 80% tool-call budget limits server reads, while per-read Redis connect/response timeouts fit inside the remaining wrapper window; failures or timeouts raise `TraceUnavailable`.
+
 The `trace(...)` body:
-1. Run the zero-hop check: `MATCH (t:Entity {id:$id}) {DES} RETURN t, d.k AS dk, …`. A hit returns a `TraceResult` with `hops=0` and one node.
-2. Otherwise run `trace_cypher` through `ro`. Map the FalkorDB `Node` and `Edge` objects to `TraceNode` and `TraceEdge`: properties `id`, `name`, `kind`, `country`; edge `k`, `pct`, `pct_basis`→`basis`, `role`, `valid_from`, `valid_to`, `src`, `src_record`. Resolve `from_id`/`to_id` from the `src_node`/`dest_node` internal IDs through the path's node list, as v1's `serialize_path` did.
+1. Run the zero-hop check: `MATCH (t:Entity {id:$id}) {DES} RETURN t, d.k AS dk, …`. A hit returns a `TraceResult` with `hops=0` and one node. Apply `exclude` to the designation edge as well as every path edge.
+2. Otherwise probe exact hop depths in ascending order through `ro`. Map the FalkorDB `Node` and `Edge` objects to `TraceNode` and `TraceEdge`: properties `id`, `name`, `kind`, `country`; edge `k`, `pct`, `pct_basis`→`basis`, `role`, `valid_from`, `valid_to`, `src`, `src_record`. Resolve `from_id`/`to_id` from the `src_node`/`dest_node` internal IDs through the path's node list, as v1's `serialize_path` did.
 3. Put the `cypher` text and `latency_ms` on the result.
 
-- [ ] **Step 4: Run the tests** → `pytest tests/test_trace.py -v` → 6 passed
-- [ ] **Step 5: Commit** → `git commit -m "feat: dated, alias-aware exposure trace (ownership and context modes)"`
+- [x] **Step 4: Run the tests** → `ST_REQUIRE_DB=1 python -m pytest tests/test_trace.py -q` → 12 passed against pinned FalkorDB 6.0.2, including path-budget, graph-query, and shared-deadline failure handling
+- [x] **Step 5: Commit** → committed locally as `d49ee56` (`feat: dated alias-aware exposure trace`)
 
 ---
 
@@ -1413,7 +1418,7 @@ The `trace(...)` body:
   - `decide(g, a_id, b_id, accept: bool, by: str, reason: str, confirm_merge=False) -> dict`
   - Exceptions: `MergeNeedsConfirmation(Exception)`, `ClusterTooLarge(Exception)`, `IdentifierConflict(Exception)`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 import pytest, uuid
@@ -1466,9 +1471,9 @@ def test_two_cluster_merge_needs_confirmation(store):
     store.drop(ws)
 ```
 
-- [ ] **Step 2: Run them to verify they fail** → `pytest tests/test_aliases.py -v` → FAIL
+- [x] **Step 2: Run them to verify they fail** → collection initially failed because `graph.aliases` did not exist; implementation testing also exposed an unanchored candidate listing query, and the rejection-persistence regression failed when regeneration reopened an analyst rejection.
 
-- [ ] **Step 3: Implement `aliases.py`**
+- [x] **Step 3: Implement `aliases.py`**
 
 ```python
 from rapidfuzz import fuzz
@@ -1484,11 +1489,18 @@ class ClusterTooLarge(Exception): ...
 class IdentifierConflict(Exception): ...
 
 def score_pair(a: dict, b: dict) -> tuple[float, str, str]:
+    matches = []
     for f in ("lei", "imo"):
         if a.get(f) and b.get(f):
-            return (1.0, "accepted", f"identifier_match:{f}") if a[f] == b[f] else (0.0, "rejected", f"identifier_conflict:{f}")
-    if a.get("reg_no") and b.get("reg_no") and a.get("country") == b.get("country"):
-        return (1.0, "accepted", "identifier_match:reg_no") if a["reg_no"] == b["reg_no"] else (0.0, "rejected", "identifier_conflict:reg_no")
+            if a[f] != b[f]:
+                return 0.0, "rejected", f"identifier_conflict:{f}"
+            matches.append(f)
+    if a.get("reg_no") and b.get("reg_no") and a.get("country") and a.get("country") == b.get("country"):
+        if a["reg_no"] != b["reg_no"]:
+            return 0.0, "rejected", "identifier_conflict:reg_no"
+        matches.append("reg_no")
+    if matches:
+        return 1.0, "accepted", f"identifier_match:{matches[0]}"
     ca, cb = core(a["name"]), core(b["name"])
     s = max(fuzz.token_set_ratio(ca, cb) / 100.0, JaroWinkler.similarity(ca, cb))
     if a.get("country") and b.get("country") and a["country"] != b["country"]:
@@ -1507,26 +1519,26 @@ How `generate_candidates(g)` works:
 
 2. Score every pair in each group, skipping pairs already joined by `SAME_AS` or already decided.
 3. Write the result:
-   - `accepted` → `decide(..., accept=True, by="auto:identifier")`.
-   - `pending` or `rejected` → `MERGE (a)-[c:CANDIDATE_SAME_AS {k:$k}]->(b) SET c.score=$s, c.state=$state, c.reason=$reason`, with `k = "cand:" + "|".join(sorted([a, b]))`.
+   - `accepted` → `decide(..., accept=True, by="auto:identifier")`. If two established non-singleton clusters require analyst confirmation, store a `pending` candidate with reason `confirmation_required:cluster_merge` and confirmation-required features. If accepting would exceed the 25-entity cap, store a deterministic `rejected` candidate with reason `cluster_size_limit`; keep processing the remaining pairs.
+   - `pending` or `rejected` → atomically upsert `CANDIDATE_SAME_AS` with `k = "cand:" + "|".join(sorted([a, b]))`; preserve an existing analyst rejection and skip the upsert if an accepted `SAME_AS` link already exists, so stale candidate-generation snapshots cannot undo a decision.
    - `none` → write nothing.
 4. Return the counts by state.
 
-`list_candidates` matches `(a {id:$id})-[c:CANDIDATE_SAME_AS]-(b)` in both directions, so `b_*` is always the other side.
+`list_candidates` anchors `a` to the requested entity and matches `(a {id:$id})-[c:CANDIDATE_SAME_AS]-(b)` in either direction, so `b_*` is always the other side.
 
-For `touches_designated`, use `OPTIONAL MATCH (b)-[d:DESIGNATED]->(p:Program) WHERE p.authority IN $auth AND d.delisted_on IS NULL`, then `count(d) > 0`.
+For `touches_designated`, use `OPTIONAL MATCH (b)-[d:DESIGNATED]->(p:Program) WHERE p.authority IN $auth AND d.delisted_on IS NULL`, then `count(d) > 0`; this field describes the other endpoint, not the requested anchor.
 
 `pending_to_designated` uses the same query with `a.canon IN $scope AND c.state='pending'`, and keeps only rows where `touches_designated` is true.
 
 `decide(...)`:
 1. Run `score_pair` on the stored properties. If an accept comes back `rejected`, raise `IdentifierConflict`.
-2. Read the cluster sizes of the two canons. If they differ and both clusters have more than one member, raise `MergeNeedsConfirmation` unless `confirm_merge` is set. If the merged size would exceed 25, raise `ClusterTooLarge`.
+2. Acquire the graph-wide tokenized Redis lease, shared with provisioning and drop operations, before reading cluster sizes or mutating the graph. Keep the lease through the check, merge, and `recompute_clusters`; release it only when its token still owns the lock. Read the cluster sizes of the two canons. If they differ and both clusters have more than one member, raise `MergeNeedsConfirmation` unless `confirm_merge` is set. If the merged size would exceed 25, raise `ClusterTooLarge`.
 3. On accept: `MERGE` both `SAME_AS` directions with `k = "sa:" + "|".join(sorted ids)` and `k + "~r"`, setting `score`, `method`, `accepted_by`, `accepted_at` and `reason`. Delete the candidate edge, then `recompute_clusters`.
 4. On reject: set the candidate's `state='rejected'` and its `reason`.
 5. Return `{"accepted": bool, "canon": <canon of a after the change>}`.
 
-- [ ] **Step 4: Run the tests** → 6 passed
-- [ ] **Step 5: Commit** → `git commit -m "feat: alias candidates, identifier-conflict rejection, chaining guard"`
+- [x] **Step 4: Run the tests** → `ST_REQUIRE_DB=1 python -m pytest tests/test_aliases.py -q` → 17 passed against pinned FalkorDB 6.0.2, including unknown-country registration numbers, concurrent decision preservation, identifier conflicts, safe confirmation/cap handling, and concurrent acceptance at the hard cluster limit
+- [x] **Step 5: Commit** → `git commit -m "feat: alias candidates, identifier-conflict rejection, chaining guard"`
 
 ---
 
