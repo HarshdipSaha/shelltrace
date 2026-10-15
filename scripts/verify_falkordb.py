@@ -7,7 +7,13 @@ import sys
 import time
 import uuid
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
+
+
+BACKEND = str(Path(__file__).resolve().parents[1] / "backend")
+if BACKEND not in sys.path:
+    sys.path.insert(0, BACKEND)
 
 
 def _connection(db: Any) -> Any:
@@ -55,6 +61,22 @@ def _v2(g: Any) -> None:
     )
     if not rows or rows[0][0] != 3:
         raise AssertionError(f"WCC should return all 3 N nodes, got {rows!r}")
+
+
+def _v1(g: Any) -> None:
+    # Exercise the application's actual read-only boundary. Do not substitute a
+    # verifier-only keyword guard: Graph.ro_query must reject the attempted write.
+    from shelltrace.db import ro
+
+    try:
+        ro(g, "CREATE (:V1WriteProbe {id:'must-not-exist'})")
+    except Exception:
+        pass
+    else:
+        raise AssertionError("production ro() accepted a write query")
+    rows = _rows(g.query("MATCH (n:V1WriteProbe) RETURN count(n)"))
+    if not rows or rows[0][0] != 0:
+        raise AssertionError(f"read-only write probe created data: {rows!r}")
 
 
 def _v3(g: Any) -> str:
@@ -136,6 +158,7 @@ def _v9() -> None:
 
 
 CHECK_NAMES = (
+    "V1_ro_query_rejects_write",
     "V2_wcc",
     "V3_fulltext",
     "V4_graph_copy",
@@ -206,7 +229,7 @@ def main() -> int:
         print(f"FAIL connection: {exc}", file=sys.stderr)
         return 2
 
-    deferred = 1
+    deferred = 0
     failures = 0
     names_reserved = False
     try:
@@ -227,20 +250,16 @@ def main() -> int:
             "(b)-[:OWNS {k:'b-a'}]->(a)"
         )
 
-        print(
-            "DEFERRED V1_ro_query_rejects_write: verify against Task 1's production "
-            "GraphStore helper after Tasks 1-3; a verifier-local guard would not test "
-            "the application's read-only boundary."
-        )
         checks: dict[str, Callable[[], str | None]] = {
-            CHECK_NAMES[0]: lambda: _v2(graph),
-            CHECK_NAMES[1]: lambda: _v3(graph),
-            CHECK_NAMES[2]: lambda: _v4(db, graph_name, copy_name),
-            CHECK_NAMES[3]: lambda: _v5(graph),
-            CHECK_NAMES[4]: lambda: _v6(graph),
-            CHECK_NAMES[5]: lambda: _v7(graph),
-            CHECK_NAMES[6]: lambda: _v8(graph),
-            CHECK_NAMES[7]: _v9,
+            CHECK_NAMES[0]: lambda: _v1(graph),
+            CHECK_NAMES[1]: lambda: _v2(graph),
+            CHECK_NAMES[2]: lambda: _v3(graph),
+            CHECK_NAMES[3]: lambda: _v4(db, graph_name, copy_name),
+            CHECK_NAMES[4]: lambda: _v5(graph),
+            CHECK_NAMES[5]: lambda: _v6(graph),
+            CHECK_NAMES[6]: lambda: _v7(graph),
+            CHECK_NAMES[7]: lambda: _v8(graph),
+            CHECK_NAMES[8]: _v9,
         }
         for name, check in checks.items():
             try:
