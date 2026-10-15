@@ -83,6 +83,12 @@ def test_search_exact_identifier_is_first_and_limit_is_respected(store, golden_w
     assert results[0]["imo"] == "9876543"
 
 
+def test_search_accepts_limits_above_legacy_cap(store, golden_ws):
+    results = entity_search(store.workspace(golden_ws), "blue lagoon", limit=21)
+
+    assert len(results) <= 21
+
+
 def test_entity_lookup_and_neighborhood_are_bounded(store, golden_ws):
     graph = store.workspace(golden_ws)
 
@@ -92,6 +98,12 @@ def test_entity_lookup_and_neighborhood_are_bounded(store, golden_ws):
 
     assert len(result["nodes"]) <= 2
     assert all(edge["from_id"] in node_ids and edge["to_id"] in node_ids for edge in result["edges"])
+
+
+def test_neighborhood_accepts_limits_above_legacy_cap(store, golden_ws):
+    result = neighborhood(store.workspace(golden_ws), "c_fjord", depth=2, limit=51)
+
+    assert 1 <= len(result["nodes"]) <= 51
 
 
 def test_neighborhood_marks_expired_edges(store, golden_ws):

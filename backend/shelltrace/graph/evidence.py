@@ -81,8 +81,6 @@ LIMIT $row_limit
 """
 
 SEARCH_FIELDS = ("id", "name", "kind", "country", "lei", "imo", "designated")
-MAX_SEARCH_LIMIT = 20
-MAX_NEIGHBORHOOD_LIMIT = 50
 MAX_NEIGHBORHOOD_DEPTH = 2
 MAX_NEIGHBORHOOD_EDGE_ROWS = 1_000
 
@@ -92,13 +90,9 @@ def _date(value: str) -> str:
     return value
 
 
-def _limit(value: int, maximum: int, name: str) -> int:
-    if (
-        isinstance(value, bool)
-        or not isinstance(value, int)
-        or not 1 <= value <= maximum
-    ):
-        raise ValueError(f"{name} must be an integer between 1 and {maximum}")
+def _limit(value: int, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ValueError(f"{name} must be a positive integer")
     return value
 
 
@@ -149,7 +143,7 @@ def ownership_stakes(g, entity_id: str, as_of: str) -> list[Stake]:
 
 
 def entity_search(g, query: str, limit: int = 10) -> list[dict]:
-    limit = _limit(limit, MAX_SEARCH_LIMIT, "limit")
+    limit = _limit(limit, "limit")
     if not isinstance(query, str):
         raise ValueError("query must be a string")
     normalized = norm(query)
@@ -206,7 +200,7 @@ def entity_search(g, query: str, limit: int = 10) -> list[dict]:
 
 
 def neighborhood(g, entity_id: str, depth: int = 1, limit: int = 50) -> dict:
-    limit = _limit(limit, MAX_NEIGHBORHOOD_LIMIT, "limit")
+    limit = _limit(limit, "limit")
     if (
         isinstance(depth, bool)
         or not isinstance(depth, int)
