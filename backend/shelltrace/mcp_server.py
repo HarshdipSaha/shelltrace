@@ -273,14 +273,31 @@ def build_mcp(store: GraphStore) -> FastMCP:
         workspace: Workspace,
         entity_id: EntityId,
         limit: Annotated[int, Field(ge=1, le=10)] = 10,
+        as_of: IsoDate | None = None,
+        max_hops: Hops = 6,
+        authorities: list[Authority] = ["OFAC", "EU", "UK"],
     ) -> Candidates:
-        return Candidates(
-            candidates=guard(
-                lambda: aliases.list_candidates(
-                    g(workspace), entity_id, limit=limit
-                )
+        graph = g(workspace)
+
+        def collect_candidates():
+            direct = aliases.list_candidates(graph, entity_id, authorities, limit)
+            if as_of is None:
+                return direct
+
+            scope, _ = upstream_scope(
+                graph,
+                canon_of(graph, entity_id),
+                as_of,
+                max_hops,
             )
-        )
+            scoped = aliases.pending_to_designated(graph, scope, authorities)
+            unique: dict[tuple[str, str], AliasCandidate] = {}
+            for candidate in [*scoped, *direct]:
+                key = tuple(sorted((candidate.a_id, candidate.b_id)))
+                unique.setdefault(key, candidate)
+            return list(unique.values())[:limit]
+
+        return Candidates(candidates=guard(collect_candidates))
 
     @mcp.tool(
         annotations=RO,
