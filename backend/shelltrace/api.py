@@ -213,6 +213,13 @@ def create_app(
             raise HTTPException(status_code=404, detail="case not found")
         return result
 
+    @app.get("/api/cases/{case_id}/reviews")
+    def get_case_reviews(case_id: str, workspace: str):
+        reviews = case_store(workspace).reviews(case_id)
+        if reviews is None:
+            raise HTTPException(status_code=404, detail="case not found")
+        return reviews
+
     @app.post("/api/cases/{case_id}/review")
     def review_case(case_id: str, workspace: str, review: ReviewIn):
         try:

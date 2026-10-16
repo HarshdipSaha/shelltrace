@@ -43,6 +43,10 @@ export const review = (workspace, id, body) => request(
   jsonBody(body),
 );
 
+export const getReviews = (workspace, id) => request(
+  `/cases/${encodeURIComponent(id)}/reviews?${query({ workspace })}`,
+);
+
 export const draftReport = (workspace, id) => request(
   `/cases/${encodeURIComponent(id)}/report?${query({ workspace })}`,
   { method: 'POST' },
@@ -64,6 +68,11 @@ export const screenName = (body) => request('/screen/name', jsonBody(body));
 export const decideAlias = (workspace, body) => request(
   `/aliases/decide?${query({ workspace })}`,
   jsonBody(body),
+);
+
+export const judgeAlias = (workspace, aId, bId) => request(
+  `/aliases/judge?${query({ workspace })}`,
+  jsonBody({ a_id: aId, b_id: bId }),
 );
 
 export const subgraph = (workspace, entityId, depth = 1, limit = 50) => request(
