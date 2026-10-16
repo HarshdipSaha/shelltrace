@@ -1,0 +1,371 @@
+{
+  "started": "2026-10-16T05:37:14.041Z",
+  "site": "https://frontend-five-opal-42.vercel.app",
+  "api": "http://127.0.0.1:8012",
+  "workspace": "realbrowser_1016",
+  "setup": "Deployed UI; browser API requests forwarded to authentic local FalkorDB API. Public deployment unchanged.",
+  "runs": [
+    {
+      "id": "01-clearing-current",
+      "query": "2534007UK6G30KDX1A47",
+      "date": "2026-10-15",
+      "name": "National Clearing Centre",
+      "started": "2026-10-16T05:37:15.746Z",
+      "errors": [],
+      "requests": [
+        {
+          "path": "/api/notifications",
+          "status": 200
+        },
+        {
+          "path": "/api/entities/search",
+          "status": 200
+        },
+        {
+          "path": "/api/health",
+          "status": 200
+        },
+        {
+          "path": "/api/cases",
+          "status": 200
+        },
+        {
+          "path": "/api/cases/case_d96ea8f0f04f/reviews",
+          "status": 200
+        },
+        {
+          "path": "/api/screen/name",
+          "status": 200
+        },
+        {
+          "path": "/api/cases/case_d96ea8f0f04f/report",
+          "status": 200
+        }
+      ],
+      "entity": {
+        "id": "lei:2534007UK6G30KDX1A47",
+        "name": "National Clearing Centre",
+        "kind": "Company",
+        "country": "ru"
+      },
+      "disposition": "EXPOSED",
+      "packs": {
+        "OFAC": "BLOCKED",
+        "EU": "BLOCKED",
+        "UK": "BLOCKED"
+      },
+      "evidenceCount": 4,
+      "claims": 6,
+      "horizontalOverflow": 0,
+      "status": "passed",
+      "durationMs": 13884,
+      "artifacts": [
+        {
+          "file": "01-clearing-current/final.png",
+          "sha256": "7de6753df1fdd34c6f27c57dd08adc2ff1cc10fbd9fddec040f515bd23502c4d"
+        },
+        {
+          "file": "01-clearing-current/run.webm",
+          "sha256": "22b8c816a30cea3058ccb70fab9f016aa3c73ba4c0c42207b79f0407961734de"
+        },
+        {
+          "file": "01-clearing-current/trace.zip",
+          "sha256": "e819edc98721632664c37052a0a5f12594fe1ea38d4b1bb738981853eab1110f"
+        }
+      ]
+    },
+    {
+      "id": "02-clearing-historical",
+      "query": "2534007UK6G30KDX1A47",
+      "date": "2010-01-01",
+      "name": "National Clearing Centre",
+      "started": "2026-10-16T05:37:34.844Z",
+      "errors": [],
+      "requests": [
+        {
+          "path": "/api/notifications",
+          "status": 200
+        },
+        {
+          "path": "/api/health",
+          "status": 200
+        },
+        {
+          "path": "/api/entities/search",
+          "status": 200
+        },
+        {
+          "path": "/api/cases",
+          "status": 200
+        },
+        {
+          "path": "/api/cases/case_54dc509449ef/reviews",
+          "status": 200
+        },
+        {
+          "path": "/api/screen/name",
+          "status": 200
+        },
+        {
+          "path": "/api/cases/case_54dc509449ef/report",
+          "status": 200
+        }
+      ],
+      "entity": {
+        "id": "lei:2534007UK6G30KDX1A47",
+        "name": "National Clearing Centre",
+        "kind": "Company",
+        "country": "ru"
+      },
+      "disposition": "CLEAR_WITHIN_BOUNDS",
+      "packs": {
+        "OFAC": "NOT_BLOCKED",
+        "EU": "NOT_BLOCKED",
+        "UK": "NOT_BLOCKED"
+      },
+      "evidenceCount": 0,
+      "claims": 0,
+      "horizontalOverflow": 0,
+      "status": "passed",
+      "durationMs": 7663,
+      "artifacts": [
+        {
+          "file": "02-clearing-historical/final.png",
+          "sha256": "c5ee562aa076a19a8456c549c19b7664cddcba9078837151e2dab63e4194d636"
+        },
+        {
+          "file": "02-clearing-historical/run.webm",
+          "sha256": "10f5cbd539b8bca23955a7ae7e25bf9226192b52283f7fa3d1803dd91f16e206"
+        },
+        {
+          "file": "02-clearing-historical/trace.zip",
+          "sha256": "7b272a38914d76f30e4e46c17f1727e0361f8f30c6f4eac2f2036277e1c4000d"
+        }
+      ]
+    },
+    {
+      "id": "03-gtlk-capital",
+      "query": "635400I6H6CSZ39WIN49",
+      "date": "2026-10-15",
+      "name": "GTLK Europe Capital",
+      "started": "2026-10-16T05:37:45.182Z",
+      "errors": [],
+      "requests": [
+        {
+          "path": "/api/notifications",
+          "status": 200
+        },
+        {
+          "path": "/api/health",
+          "status": 200
+        },
+        {
+          "path": "/api/entities/search",
+          "status": 200
+        },
+        {
+          "path": "/api/cases",
+          "status": 200
+        },
+        {
+          "path": "/api/cases/case_1c1f49c789f8/reviews",
+          "status": 200
+        },
+        {
+          "path": "/api/screen/name",
+          "status": 200
+        },
+        {
+          "path": "/api/cases/case_1c1f49c789f8/report",
+          "status": 200
+        }
+      ],
+      "entity": {
+        "id": "lei:635400I6H6CSZ39WIN49",
+        "name": "GTLK Europe Capital Designated Activity Company",
+        "kind": "Company",
+        "country": "ie"
+      },
+      "disposition": "EXPOSED",
+      "packs": {
+        "OFAC": "BLOCKED",
+        "EU": "NOT_BLOCKED",
+        "UK": "NOT_BLOCKED"
+      },
+      "evidenceCount": 3,
+      "claims": 3,
+      "horizontalOverflow": 0,
+      "status": "passed",
+      "durationMs": 7024,
+      "artifacts": [
+        {
+          "file": "03-gtlk-capital/final.png",
+          "sha256": "b8c026f1f8346eec77ba90f912d7e1c83933fa40baaa8a48c08707f504a3df60"
+        },
+        {
+          "file": "03-gtlk-capital/run.webm",
+          "sha256": "adcdd0eac44659073e4332f105d044253331acdf50632c7fb8ee35b215554d60"
+        },
+        {
+          "file": "03-gtlk-capital/trace.zip",
+          "sha256": "602bb95713a470989fefc4b3390174246f808655b646f80a6d542f863a181c3b"
+        }
+      ]
+    },
+    {
+      "id": "04-vessel-imo",
+      "query": "9422964",
+      "date": "2026-10-15",
+      "name": "ABRAU",
+      "started": "2026-10-16T05:37:55.035Z",
+      "errors": [],
+      "requests": [
+        {
+          "path": "/api/health",
+          "status": 200
+        },
+        {
+          "path": "/api/notifications",
+          "status": 200
+        },
+        {
+          "path": "/api/entities/search",
+          "status": 200
+        },
+        {
+          "path": "/api/cases",
+          "status": 200
+        },
+        {
+          "path": "/api/cases/case_7150cbaf1f46/reviews",
+          "status": 200
+        },
+        {
+          "path": "/api/screen/name",
+          "status": 200
+        },
+        {
+          "path": "/api/cases/case_7150cbaf1f46/report",
+          "status": 200
+        }
+      ],
+      "entity": {
+        "id": "os:NK-223BSVnvKHYB96adihNXXZ",
+        "name": "ABRAU",
+        "kind": "Vessel",
+        "country": null
+      },
+      "disposition": "CLEAR_WITHIN_BOUNDS",
+      "packs": {
+        "OFAC": "NOT_BLOCKED",
+        "EU": "NOT_BLOCKED",
+        "UK": "NOT_BLOCKED"
+      },
+      "evidenceCount": 0,
+      "claims": 0,
+      "horizontalOverflow": 0,
+      "status": "passed",
+      "durationMs": 7711,
+      "artifacts": [
+        {
+          "file": "04-vessel-imo/final.png",
+          "sha256": "e0fed4b09a5c94428a02d9ebea1dbdfc3ee10067af053e36edf351470f1a0285"
+        },
+        {
+          "file": "04-vessel-imo/run.webm",
+          "sha256": "1f9f7a9baa0d5ee0d45dae31a2cf5456a4d56cb7cc9d5d71bdea9bb57810e748"
+        },
+        {
+          "file": "04-vessel-imo/trace.zip",
+          "sha256": "19fd9479200638d0077d7140b08ca1c20e6fc51c1ccf84a7dda621b12313f85f"
+        }
+      ]
+    },
+    {
+      "id": "05-depository-mobile",
+      "query": "253400M18U5TB02TW421",
+      "date": "2026-10-15",
+      "name": "National Settlement Depository",
+      "mobile": true,
+      "started": "2026-10-16T05:38:05.794Z",
+      "errors": [],
+      "requests": [
+        {
+          "path": "/api/health",
+          "status": 200
+        },
+        {
+          "path": "/api/notifications",
+          "status": 200
+        },
+        {
+          "path": "/api/entities/search",
+          "status": 200
+        },
+        {
+          "path": "/api/cases",
+          "status": 200
+        },
+        {
+          "path": "/api/cases/case_29fe8f4ca26d/reviews",
+          "status": 200
+        },
+        {
+          "path": "/api/screen/name",
+          "status": 200
+        },
+        {
+          "path": "/api/cases/case_29fe8f4ca26d/report",
+          "status": 200
+        }
+      ],
+      "entity": {
+        "id": "lei:253400M18U5TB02TW421",
+        "name": "Joint Stock Company National Settlement Depository",
+        "kind": "Company",
+        "country": "ru"
+      },
+      "disposition": "EXPOSED",
+      "packs": {
+        "OFAC": "BLOCKED",
+        "EU": "BLOCKED",
+        "UK": "BLOCKED"
+      },
+      "evidenceCount": 3,
+      "claims": 3,
+      "horizontalOverflow": 0,
+      "status": "passed",
+      "durationMs": 7032,
+      "artifacts": [
+        {
+          "file": "05-depository-mobile/final.png",
+          "sha256": "528a53f5651fb42800fb6933455245b1eb62b74f7d6bf243791a883cb91de59d"
+        },
+        {
+          "file": "05-depository-mobile/run.webm",
+          "sha256": "007a1c60df93513fd4ad07aa6bddbf33fb2b388c1d24f6d25085302fd2ae326f"
+        },
+        {
+          "file": "05-depository-mobile/trace.zip",
+          "sha256": "fca5d8cfcd373f51538677e0ca6272a7d29d38d1e5a3ee92e0f45ac55184342c"
+        }
+      ]
+    }
+  ],
+  "health": {
+    "status": "ok",
+    "graph": "st_facts_real_os_20261015_slice",
+    "llm": "deterministic",
+    "node_count": 32172,
+    "llm_provider": "none",
+    "alias_judge": "disabled"
+  },
+  "publicHealth": {
+    "status": "ok",
+    "graph": "st_facts_synthetic",
+    "llm": "openai/gpt-oss-120b",
+    "node_count": 67,
+    "llm_provider": "groq",
+    "alias_judge": "jev-latest"
+  }
+}
