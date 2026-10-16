@@ -70,6 +70,11 @@ export const decideAlias = (workspace, body) => request(
   jsonBody(body),
 );
 
+export const judgeAlias = (workspace, aId, bId) => request(
+  `/aliases/judge?${query({ workspace })}`,
+  jsonBody({ a_id: aId, b_id: bId }),
+);
+
 export const subgraph = (workspace, entityId, depth = 1, limit = 50) => request(
   `/subgraph?${query({ workspace, entity_id: entityId, depth, limit })}`,
 );

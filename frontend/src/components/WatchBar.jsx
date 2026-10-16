@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { searchEntities } from '../api.js';
 
 function WatchBar({ workspace, result, onWatch, onInject }) {
@@ -15,11 +15,16 @@ function WatchBar({ workspace, result, onWatch, onInject }) {
   const [injecting, setInjecting] = useState(false);
   const [toast, setToast] = useState('');
   const [error, setError] = useState('');
+  const watchRequest = useRef(0);
 
   useEffect(() => {
     setWatching(false);
+    setWatchBusy(false);
+    setError('');
     setToast('');
-  }, [result?.case_id]);
+    watchRequest.current += 1;
+    return () => { watchRequest.current += 1; };
+  }, [result?.case_id, workspace]);
 
   useEffect(() => {
     let active = true;
@@ -37,16 +42,17 @@ function WatchBar({ workspace, result, onWatch, onInject }) {
   }, [query, workspace]);
 
   const toggleWatch = async (event) => {
+    const requestId = ++watchRequest.current;
     const next = event.target.checked;
     setWatchBusy(true);
     setError('');
     try {
       await onWatch(next);
-      setWatching(next);
+      if (requestId === watchRequest.current) setWatching(next);
     } catch (cause) {
-      setError(cause?.message || 'Watch status could not be changed.');
+      if (requestId === watchRequest.current) setError(cause?.message || 'Watch status could not be changed.');
     } finally {
-      setWatchBusy(false);
+      if (requestId === watchRequest.current) setWatchBusy(false);
     }
   };
 

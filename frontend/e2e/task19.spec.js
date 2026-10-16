@@ -2,6 +2,44 @@ import { test, expect } from '@playwright/test';
 
 const nextWorkspace = () => `e2e_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 
+test('JEV recommendation stays advisory and cannot accept an alias', async ({ page }) => {
+  await page.route('**/api/aliases/judge?*', (route) => route.fulfill({ json: {
+    recommendation: 'same_entity', source: 'jev', model: 'jev-test', confidence: 0.94,
+    reason: 'model_recommendation', probabilities: { same_entity: 0.95, different_entity: 0.02, uncertain: 0.03 },
+  } }));
+  await openCase(page, nextWorkspace(), 'Juniper');
+  await expect(page.getByTestId('validated-badge')).toHaveText(/ESCALATE/);
+  const panel = page.getByRole('region', { name: 'Alias decisions' });
+  await panel.getByRole('button', { name: 'Ask JEV' }).first().click();
+  await expect(panel.getByRole('status')).toContainText('Likely same entity');
+  await expect(panel.getByRole('status')).toContainText('Analyst acceptance is required');
+  await expect(page.getByTestId('validated-badge')).toHaveText(/ESCALATE/);
+  await expect(panel.getByRole('button', { name: 'Accept alias' })).toBeVisible();
+});
+
+test('late watch response cannot mark a different case as watched', async ({ page }) => {
+  test.setTimeout(60_000);
+  await openCase(page, nextWorkspace(), 'Nord Harbor');
+  await expect(page.getByTestId('validated-badge')).toHaveText(/EXPOSED/);
+  let release;
+  let markStarted;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const started = new Promise((resolve) => { markStarted = resolve; });
+  await page.route('**/api/cases/*/watch?*', async (route) => {
+    const response = await route.fetch();
+    markStarted();
+    await gate;
+    await route.fulfill({ response });
+  });
+  await page.getByLabel('Watch this case').click();
+  await started;
+  await switchCase(page, 'Birch');
+  await expect(page.getByTestId('validated-badge')).toHaveText(/EXPOSED/);
+  release();
+  await expect(page.getByLabel('Watch this case')).toBeEnabled();
+  await expect(page.getByLabel('Watch this case')).not.toBeChecked();
+});
+
 async function openCase(page, workspace, term, asOf = '2024-01-01') {
   await page.goto(`/?ws=${workspace}`);
   await expect(page.locator('.search-panel .workspace-pill')).toHaveText(workspace);
@@ -170,6 +208,7 @@ test('evaluation page renders E3 recalls by authority and stratum', async ({ pag
     contentType: 'application/json',
     body: JSON.stringify({
       available: true,
+      golden: { playbook: { correct: 24, total: 24 }, cases: { G1: { category: 'alias_chain', expected: 'EXPOSED', actual: 'EXPOSED', correct: true } } },
       real_e3: { strata: [{
         authority: 'OFAC',
         stratum: 'neutral',
@@ -183,6 +222,7 @@ test('evaluation page renders E3 recalls by authority and stratum', async ({ pag
   await page.goto(`/?ws=${nextWorkspace()}#/eval`);
 
   const evaluation = page.getByRole('region', { name: 'E3 recall by name visibility' });
+  await expect(page.getByRole('region', { name: 'Golden results by category' })).toContainText('G1');
   await expect(evaluation).toContainText('OFAC');
   await expect(evaluation).toContainText('neutral');
   await expect(evaluation).toContainText('4');
