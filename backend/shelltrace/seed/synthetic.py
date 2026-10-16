@@ -173,7 +173,7 @@ def _merge_edges(g, relationship: str, edge_rows: list[dict], properties: str) -
     rw(g, statement, {"rows": edge_rows})
 
 
-def load_synthetic(g) -> dict:
+def load_synthetic(g, accept_aliases: bool = True) -> dict:
     """Idempotently load the exact 64-entity synthetic golden graph."""
     ensure_schema(g)
 
@@ -271,7 +271,7 @@ def load_synthetic(g) -> dict:
     )
 
     same_as_rows = []
-    for a_id, b_id, method, record in ACCEPTED_ALIASES:
+    for a_id, b_id, method, record in (ACCEPTED_ALIASES if accept_aliases else ()):
         for source_id, target_id, key in ((a_id, b_id, f"syn:{record}"), (b_id, a_id, f"syn:{record}~r")):
             same_as_rows.append({
                 "a": source_id, "b": target_id, "k": key, "method": method,

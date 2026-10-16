@@ -33,3 +33,6 @@ jobs:
       - name: Run backend tests
         working-directory: backend
         run: python -m pytest -q
+      - name: Run deterministic golden gate
+        working-directory: backend
+        run: python -m eval.run_golden --gate
