@@ -1,0 +1,6 @@
+{
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "https://shelltrace-api-796979480738.us-central1.run.app/api/:path*" },
+    { "source": "/mcp/:path*", "destination": "https://shelltrace-api-796979480738.us-central1.run.app/mcp/:path*" }
+  ]
+}

@@ -1,5 +1,8 @@
 import { defineConfig, devices } from '@playwright/test';
 
+const port = process.env.ST_UI_PORT ?? '5173';
+const origin = `http://127.0.0.1:${port}`;
+
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: true,
@@ -9,13 +12,13 @@ export default defineConfig({
   expect: { timeout: 15_000 },
   reporter: 'list',
   use: {
-    baseURL: 'http://127.0.0.1:5173',
+    baseURL: origin,
     trace: 'retain-on-failure',
     ...devices['Desktop Chrome'],
   },
   webServer: {
     command: 'npm run dev -- --host 127.0.0.1',
-    url: 'http://127.0.0.1:5173',
+    url: origin,
     reuseExistingServer: !process.env.CI,
     timeout: 30_000,
   },

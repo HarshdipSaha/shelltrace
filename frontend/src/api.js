@@ -9,17 +9,31 @@ async function request(path, options = {}) {
 
   const responseText = await response.text();
   let payload;
+  let parsedJson = true;
   try {
     payload = responseText ? JSON.parse(responseText) : null;
   } catch {
     payload = responseText;
+    parsedJson = false;
   }
 
   if (!response.ok) {
+    // A non-JSON error body (an HTML 404 from a static host with no backend behind /api, a proxy error page)
+    // is never shown verbatim: it is unreadable and unsafe to echo into the page.
+    if (!parsedJson) {
+      const reachability = response.status === 404 || response.status >= 502
+        ? 'the ShellTrace API is not reachable at this address (the backend may not be running or deployed)'
+        : 'the server returned an unreadable error response';
+      throw new Error(`API ${response.status}: ${reachability}`);
+    }
     const detail = payload && typeof payload === 'object'
       ? payload.detail ?? JSON.stringify(payload)
       : payload || response.statusText;
     throw new Error(`API ${response.status}: ${typeof detail === 'string' ? detail : JSON.stringify(detail)}`);
+  }
+
+  if (!parsedJson) {
+    throw new Error(`API ${response.status}: the server returned a response that is not valid JSON`);
   }
 
   return payload;
@@ -32,11 +46,20 @@ export const searchEntities = (workspace, q, limit = 8) => request(
   `/entities/search?${query({ workspace, q, limit })}`,
 );
 
-export const openCase = (body) => request('/cases', jsonBody(body));
+// A case response without these fields would crash the case views, so reject it at the boundary.
+const requireCase = (payload) => {
+  const valid = payload && typeof payload === 'object' && typeof payload.case_id === 'string'
+    && payload.entity && typeof payload.entity === 'object' && Array.isArray(payload.steps)
+    && Array.isArray(payload.rulepacks) && payload.packs && payload.bounds;
+  if (!valid) throw new Error('API returned an incomplete case response; no verdict can be shown.');
+  return payload;
+};
+
+export const openCase = (body) => request('/cases', jsonBody(body)).then(requireCase);
 
 export const getCase = (workspace, id) => request(
   `/cases/${encodeURIComponent(id)}?${query({ workspace })}`,
-);
+).then(requireCase);
 
 export const review = (workspace, id, body) => request(
   `/cases/${encodeURIComponent(id)}/review?${query({ workspace })}`,
