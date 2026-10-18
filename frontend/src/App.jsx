@@ -337,7 +337,7 @@ function App() {
       </div>
 
       <footer className="app-footer">
-        <span>ShellTrace · Synthetic investigation workspace</span>
+        <span>ShellTrace · {result?.snapshot || service.health?.graph || 'Investigation workspace'}</span>
         <span className="footer-disclaimer">For investigative use only — not legal advice.</span>
       </footer>
     </div>

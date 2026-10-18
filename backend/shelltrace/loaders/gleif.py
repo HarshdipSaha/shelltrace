@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import json
 from collections import defaultdict, deque
 from pathlib import Path
 
@@ -12,11 +13,6 @@ GLEIF_COLS = {"start": "Relationship.StartNode.NodeID", "end": "Relationship.End
 
 def _date(value):
     return value[:10] if value else None
-
-
-def _slot(row, prefix, field):
-    return next((row.get(f"{prefix}.{i}.{field}") for i in range(1, 6)
-                 if row.get(f"{prefix}.{i}.{field}")), None)
 
 
 def _relationship_period(row):
@@ -35,12 +31,19 @@ def parse_gleif_rr(path: str | Path, keep_leis: set[str]):
             child, parent = row.get(GLEIF_COLS["start"]), row.get(GLEIF_COLS["end"])
             if not child or not parent or (keep_leis and child not in keep_leis and parent not in keep_leis):
                 continue
-            amount = _slot(row, "Relationship.Quantifiers", "QuantifierAmount")
-            unit = _slot(row, "Relationship.Quantifiers", "QuantifierUnits")
+            quantifiers = [{field: row.get(f'Relationship.Quantifiers.{i}.{field}', '')
+                           for field in ('QuantifierAmount', 'QuantifierUnits', 'MeasurementMethod')}
+                          for i in range(1, 6)]
+            populated = [q for q in quantifiers if q['QuantifierAmount']]
+            documented = [q for q in populated if q['QuantifierUnits'] == 'PERCENTAGE'
+                          and q['MeasurementMethod'] == 'ACCOUNTING_CONSOLIDATION']
+            quantifier = (documented or populated or [{}])[0]
+            amount = quantifier.get('QuantifierAmount')
             start, end = _relationship_period(row)
             props = {"basis": "accounting_consolidation", "valid_from": start, "valid_to": end,
-                     "src": "gleif:rr", "src_record": f"{parent}>{child}"}
-            if amount and str(unit).upper() == "PERCENTAGE":
+                     "src": "gleif:rr", "src_record": f"{parent}>{child}",
+                     'quantifiers_json': json.dumps(populated, sort_keys=True)}
+            if documented:
                 props.update({"pct": normalise_pct(amount, "percent"), "pct_basis": "accounting_consolidation"})
                 label = "OWNS"
             else:

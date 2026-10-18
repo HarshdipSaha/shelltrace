@@ -53,6 +53,8 @@ def load_rows(g, nodes: Iterable[NodeRow], edges: Iterable[EdgeRow], snapshot: s
               licence: str, batch_size: int = 500) -> dict[str, int]:
     """Idempotently load allowlisted rows and attach provenance to every fact."""
     nodes, edges = list(nodes), list(edges)
+    if batch_size < 1:
+        raise ValueError('batch_size must be positive')
     if any(node.label == "Person" for node in nodes):
         raise ValueError("natural persons cannot be loaded into a real-data graph")
     allowed_nodes = {"Company", "Vessel", "Program"}
@@ -72,6 +74,7 @@ def load_rows(g, nodes: Iterable[NodeRow], edges: Iterable[EdgeRow], snapshot: s
                       "SET e += r, e.canon=coalesce(e.canon,r.id), e.src=coalesce(r.src,'loader'), "
                       "e.src_record=coalesce(r.src_record,r.id), e.snapshot=$snapshot, e.licence=$licence",
                    {"rows": typed, "snapshot": snapshot, "licence": licence})
+    loaded_edges = 0
     for offset in range(0, len(edges), batch_size):
         for label in allowed_edges:
             typed = []
@@ -79,8 +82,9 @@ def load_rows(g, nodes: Iterable[NodeRow], edges: Iterable[EdgeRow], snapshot: s
                 if edge.label == label:
                     typed.append({"a": edge.source, "b": edge.target, "k": edge.key, **edge.properties})
             if typed:
-                rw(g, f"UNWIND $rows AS r MATCH (a:Entity {{id:r.a}}),(b:Entity {{id:r.b}}) "
+                counts = rw(g, f"UNWIND $rows AS r MATCH (a:Entity {{id:r.a}}),(b:Entity {{id:r.b}}) "
                       f"MERGE (a)-[e:{label} {{k:r.k}}]->(b) SET e += r, e.src=coalesce(r.src,'loader'), "
-                      "e.src_record=coalesce(r.src_record,r.k), e.snapshot=$snapshot, e.licence=$licence",
+                      "e.src_record=coalesce(r.src_record,r.k), e.snapshot=$snapshot, e.licence=$licence RETURN count(e) AS n",
                    {"rows": typed, "snapshot": snapshot, "licence": licence})
-    return {"nodes": len(nodes), "edges": len(edges)}
+                loaded_edges += counts[0]['n']
+    return {"nodes": len(nodes), "edges": loaded_edges, "skipped_missing_endpoints": len(edges) - loaded_edges}

@@ -13,6 +13,8 @@ ShellTrace traces ownership and control through a FalkorDB graph and returns a c
 | **Specification and plan** | [`docs/pre-event/`](docs/pre-event/) |
 | **Test report** | [`docs/testing/2026-10-16-exploratory-e2e-report.md`](docs/testing/2026-10-16-exploratory-e2e-report.md) |
 | **Deployment runbook** | [`docs/deployment.md`](docs/deployment.md) |
+| **Recording script** | [`docs/demo-script.md`](docs/demo-script.md) |
+| **Real-data evaluation** | [`docs/real-data-evaluation.md`](docs/real-data-evaluation.md) |
 
 ## Why it exists
 
@@ -91,6 +93,18 @@ Provider contracts: [Groq chat API](https://console.groq.com/docs/api-reference)
 ## Platform facts
 
 FalkorDB behaviour the build depends on (pinned image, read-only query enforcement, fulltext DDL, graph copy, MCP SDK version) is verified and recorded in [`docs/verified-facts.md`](docs/verified-facts.md). Re-run with `python scripts/verify_falkordb.py`.
+
+## Data scope and disclosure
+
+The public demo uses disclosed synthetic data. A separate local OpenSanctions/
+GLEIF slice and its source-date limitations are documented in the
+[real-data evaluation runbook](docs/real-data-evaluation.md). GLEIF accounting
+consolidation is excluded from legal ownership totals. Small real-data strata
+are reported as counts; they don't establish general accuracy.
+
+AI coding assistance was used during development. The pre-event research and
+plan live under `docs/pre-event/`; the earlier project is
+[HarshdipSaha/graphrag](https://github.com/HarshdipSaha/graphrag).
 
 ## License
 

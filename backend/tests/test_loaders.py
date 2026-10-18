@@ -86,3 +86,33 @@ def test_load_rows_attributed_idempotent(store):
         assert ro(g,'MATCH ()-[r]->() WHERE r.src IS NULL OR r.snapshot IS NULL OR r.licence IS NULL RETURN count(r) AS n')[0]['n']==0
         with pytest.raises(ValueError):load_rows(g,[NodeRow('p','Person','forbidden')],[],'s','l')
     finally:g.delete()
+
+
+def test_gleif_quantifier_amount_and_unit_must_come_from_same_slot(tmp_path):
+    row = next(csv.DictReader((FIX/'gleif_rr_sample.csv').open(encoding='utf8')))
+    row.update({'Relationship.RelationshipType': 'IS_DIRECTLY_CONSOLIDATED_BY',
+                'Relationship.RelationshipStatus': 'ACTIVE'})
+    for i in range(1, 6):
+        for field in ('QuantifierAmount', 'QuantifierUnits', 'MeasurementMethod'):
+            row[f'Relationship.Quantifiers.{i}.{field}'] = ''
+    row['Relationship.Quantifiers.1.QuantifierAmount'] = '99'
+    row['Relationship.Quantifiers.1.MeasurementMethod'] = 'ACCOUNTING_CONSOLIDATION'
+    row['Relationship.Quantifiers.2.QuantifierUnits'] = 'PERCENTAGE'
+    path = tmp_path/'mismatched.csv'
+    with path.open('w', newline='', encoding='utf8') as handle:
+        writer = csv.DictWriter(handle, fieldnames=row)
+        writer.writeheader(); writer.writerow(row)
+    [edge] = parse_gleif_rr(path, set())
+    assert edge.label == 'CONTROLS'
+    assert edge.properties.get('pct') is None
+
+
+def test_missing_gem_imputation_flag_remains_uncertain(tmp_path):
+    data = [{'id': i, 'schema': 'Company', 'caption': i} for i in ['a', 'b']]
+    data.append({'id': 'own', 'schema': 'Ownership', 'properties': {
+        'owner': ['a'], 'asset': ['b'], 'percentage': ['100']}})
+    path = tmp_path/'unverified.jsonl'
+    path.write_text('\n'.join(json.dumps(row) for row in data), encoding='utf8')
+    _, [edge], _ = parse_gem(path)
+    assert edge.properties.get('pct') is None
+    assert edge.properties['data_error'] == 'imputed_or_unverified_share'

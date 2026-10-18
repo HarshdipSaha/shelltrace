@@ -24,7 +24,7 @@ def parse_gem(path: str | Path):
         owner, asset = _first(props,"owner"), _first(props,"asset")
         if owner not in nodes or asset not in nodes: continue
         values = {"valid_from": _first(props,"startDate"), "valid_to": _first(props,"endDate"), "src":"gem", "src_record":item["id"]}
-        if str(_first(props,"share_imputed")).lower() in {"true","1","yes"}:
+        if str(_first(props,"share_imputed")).lower() not in {"false","0","no"}:
             values["data_error"]="imputed_or_unverified_share"
         else:
             try: values.update({"pct": normalise_pct(_first(props,"percentage"),"percent"), "pct_basis":"shareholding"})

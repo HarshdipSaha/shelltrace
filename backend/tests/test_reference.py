@@ -148,6 +148,12 @@ def test_only_rulepack_accepted_bases_contribute_to_ownership():
     assert ref_evaluate("A", graph, shareholding_only).verdict == "NOT_BLOCKED"
 
 
+def test_default_rulepacks_exclude_consolidation_from_legal_ownership():
+    graph = G([('consolidation', 'X', 'A', 100.0, 'accounting_consolidation')], seeds={'X': ('dX',)})
+    for pack in (OFAC, EU, UK):
+        assert ref_evaluate('A', graph, pack).verdict == 'NOT_BLOCKED'
+
+
 def test_crosses_uses_exact_inclusive_and_strict_legal_thresholds():
     assert crosses(50.0, OFAC)
     assert not crosses(50.0 - EPS / 2, OFAC)

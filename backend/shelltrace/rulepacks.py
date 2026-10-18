@@ -1,11 +1,11 @@
 from .models import RulePack
 
 
-_BASIS = ("shareholding", "accounting_consolidation", "synthetic")
+_BASIS = ("shareholding", "synthetic")
 
 OFAC = RulePack(
     id="OFAC",
-    version="ofac-2014-faq398-402+2026-03",
+    version="ofac-2014-faq398-402+2026-03+shareholding-only",
     authorities=("OFAC",),
     threshold=50.0,
     inclusive=True,
@@ -25,7 +25,7 @@ OFAC = RulePack(
 
 EU = RulePack(
     id="EU",
-    version="eu-bp-11623-24+reg-2025-2037",
+    version="eu-bp-11623-24+reg-2025-2037+shareholding-only",
     authorities=("EU",),
     threshold=50.0,
     inclusive=True,
@@ -46,7 +46,7 @@ EU = RulePack(
 
 UK = RulePack(
     id="UK",
-    version="ofsi-gg-4.1-2026-05",
+    version="ofsi-gg-4.1-2026-05+shareholding-only",
     authorities=("UK",),
     threshold=50.0,
     inclusive=False,

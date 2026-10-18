@@ -199,3 +199,18 @@ def test_event_id_is_deterministic():
     ev = designation("demo")
 
     assert event_id(ev) == event_id(ev.model_copy())
+
+
+async def test_designation_skips_unrelated_real_data_workspace(store):
+    workspace = fresh(store)
+    unrelated = 'realother_' + uuid4().hex[:8]
+    graph = store.workspace(unrelated)
+    rw(graph, "CREATE (:Entity:Company {id:'lei:CORPORATE',name:'Corporate Marker',canon:'lei:CORPORATE'})")
+    ev = designation(workspace)
+    try:
+        outcome = await process_designation(store, ev, memory_port(store), get_settings())
+        assert outcome.designation_key == impact_designation_key(ev)
+        assert ro(graph, 'MATCH (n) RETURN count(n) AS n')[0]['n'] == 1
+    finally:
+        clear_designation(store, impact_designation_key(ev))
+        drop_workspaces(store, [workspace, unrelated])

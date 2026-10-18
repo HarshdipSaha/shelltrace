@@ -10,6 +10,7 @@ const crypto = require('node:crypto');
 const site = process.env.REAL_SITE_URL || 'https://frontend-five-opal-42.vercel.app';
 const api = process.env.REAL_API_URL || 'http://127.0.0.1:8012';
 const workspace = process.env.REAL_WORKSPACE || 'realbrowser_1016';
+const localSite = ['localhost', '127.0.0.1'].includes(new URL(site).hostname);
 const out = path.resolve(process.env.REAL_RUN_DIR || 'docs/testing/real-data-runs/2026-10-16');
 const scenarios = [
   { id: '01-clearing-current', query: '2534007UK6G30KDX1A47', date: '2026-10-15', name: 'National Clearing Centre' },
@@ -27,7 +28,7 @@ const scenarios = [
   // Visible Chromium by default; HEADLESS=1 is available for display-less CI.
   const browser = await chromium.launch({ headless: process.env.HEADLESS === '1' });
   const summary = { started: new Date().toISOString(), site, api, workspace,
-    setup: 'Deployed UI; browser API requests forwarded to authentic local FalkorDB API. Public deployment unchanged.', runs: [] };
+    setup: `${localSite ? 'Local UI' : 'Deployed UI'}; browser API requests forwarded to authentic local FalkorDB API. Public deployment unchanged.`, runs: [] };
   try {
     const probe = await browser.newContext();
     const health = await probe.request.get(`${api}/api/health`);
@@ -55,10 +56,10 @@ const scenarios = [
         });
         await page.goto(`${site}/?ws=${workspace}`, { waitUntil: 'domcontentloaded' });
         await expect(page.getByRole('heading', { name: 'Investigate an entity' })).toBeVisible();
-        await page.evaluate(() => {
-          const note = document.createElement('div'); note.textContent = 'RECORDED REAL-DATA TEST: deployed UI → local OpenSanctions/GLEIF API';
+        await page.evaluate((isLocal) => {
+          const note = document.createElement('div'); note.textContent = `RECORDED REAL-DATA TEST: ${isLocal ? 'local' : 'deployed'} UI → local OpenSanctions/GLEIF API`;
           note.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:#fff3c4;color:#222;padding:8px;z-index:99999;font:12px sans-serif'; document.body.appendChild(note);
-        });
+        }, localSite);
         await page.getByPlaceholder('Search company, LEI or IMO').fill(scenario.query);
         await page.getByRole('option', { name: new RegExp(scenario.name, 'i') }).first().click({ timeout: 20000 });
         await page.getByLabel('As of').fill(scenario.date);

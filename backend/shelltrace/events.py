@@ -4,7 +4,7 @@ import inspect
 from dataclasses import dataclass, field
 
 from .agent.runner import run_case
-from .db import GraphStore, rw
+from .db import GraphStore, ro, rw
 from .graph.impact import (
     apply_designation,
     blast_radius,
@@ -71,11 +71,14 @@ async def process_designation(
     settings,
 ) -> EventOutcome:
     eid = event_id(ev)
+    # Validate the originating workspace before propagating any mutation.
+    canon_of(store.workspace(ev.workspace), ev.entity_id)
     graphs = [store.template()]
     graphs.extend(store.workspace(ws) for ws in sorted(set(store.workspaces())))
     designation_key = None
     for graph in graphs:
-        designation_key = apply_designation(graph, ev)
+        if ro(graph, 'MATCH (e:Entity {id:$id}) RETURN e.id AS id', {'id': ev.entity_id}):
+            designation_key = apply_designation(graph, ev)
 
     # GraphStore always has a template, so this is only a defensive type guard.
     if designation_key is None:

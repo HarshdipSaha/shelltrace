@@ -65,10 +65,22 @@ def create_app(
         lambda: McpHttpToolPort(settings.mcp_url, settings.mcp_api_key)
     )
 
+    def seed_workspace(graph):
+        if not settings.template_graph.startswith('st_facts_real_'):
+            return load_synthetic(graph)
+        # Imported real templates are already facts. Validate them without
+        # running the synthetic seeder, including on first boot without markers.
+        count = ro(graph, 'MATCH (e:Entity) RETURN count(e) AS n')[0]['n']
+        people = ro(graph, 'MATCH (p:Person) RETURN count(p) AS n')[0]['n']
+        synthetic = ro(graph, "MATCH (e:Entity) WHERE e.src STARTS WITH 'synthetic' RETURN count(e) AS n")[0]['n']
+        if not count or people or synthetic:
+            raise RuntimeError('Load a nonempty person-free real template before starting this workspace')
+        return {'entities': count}
+
     @asynccontextmanager
     async def lifespan(app):
         if store.ping():
-            store.provision(settings.default_workspace, seeder=load_synthetic)
+            store.provision(settings.default_workspace, seeder=seed_workspace)
         async with mcp.session_manager.run():
             yield
 
@@ -112,7 +124,7 @@ def create_app(
 
     def ws_graph(workspace: str):
         if workspace not in store.workspaces():
-            store.provision(workspace, seeder=load_synthetic)
+            store.provision(workspace, seeder=seed_workspace)
         return store.workspace(workspace)
 
     async def run_request(req: CaseRequest):

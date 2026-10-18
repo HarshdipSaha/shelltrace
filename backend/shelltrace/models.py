@@ -136,6 +136,7 @@ class EvidenceItem(Strict):
     valid_from: IsoDate | None = None
     valid_to: IsoDate | None = None
     listed_on: IsoDate | None = None
+    listed_on_basis: str | None = None
     delisted_on: IsoDate | None = None
     src: str | None = None
     src_record: str | None = None

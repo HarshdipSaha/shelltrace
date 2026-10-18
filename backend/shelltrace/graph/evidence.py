@@ -15,7 +15,7 @@ RETURN r.k AS k, type(r) AS type, a.id AS from_id, a.name AS from_name,
        b.id AS to_id, b.name AS to_name, r.pct AS pct,
        coalesce(r.pct_basis, r.basis) AS basis, r.role AS role,
        r.valid_from AS valid_from, r.valid_to AS valid_to,
-       r.listed_on AS listed_on, r.delisted_on AS delisted_on,
+       r.listed_on AS listed_on, r.listed_on_basis AS listed_on_basis, r.delisted_on AS delisted_on,
        r.src AS src, r.src_record AS src_record, r.snapshot AS snapshot,
        r.licence AS licence, r.url AS url
 """

@@ -189,7 +189,7 @@ function SearchPanel({
               disabled={agentDisabled || loading}
               onChange={() => onChange({ mode: 'agent' })}
             />
-            <span><strong>Agent</strong><small>Claude-assisted</small></span>
+            <span><strong>Agent</strong><small>{health?.llm_provider === 'groq' ? 'Groq-assisted' : health?.llm_provider === 'anthropic' ? 'Claude-assisted' : 'Model-assisted'}</small></span>
           </label>
           <label className={`mode-choice ${mode === 'playbook' ? 'mode-choice--active' : ''}`}>
             <input

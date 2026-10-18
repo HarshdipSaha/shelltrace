@@ -314,3 +314,28 @@ def test_agent_mode_without_key_falls_back(client, api_workspace):
     data = response.json()
     assert data["actor_model"] == "playbook"
     assert any(step["fallback_reason"] == "no_model_key" for step in data["steps"])
+
+
+def test_real_template_startup_and_new_workspace_never_seed_synthetic(store):
+    from shelltrace.db import GraphStore, ro
+    from shelltrace.schema import ensure_schema
+    from shelltrace.loaders.common import NodeRow, load_rows
+    workspace = 'realtest_' + uuid4().hex[:8]
+    settings = replace(get_settings(), template_graph='st_facts_real_test_' + uuid4().hex[:8],
+                       default_workspace=workspace, llm_provider='none')
+    real_store = GraphStore(settings)
+    template = real_store.template()
+    ensure_schema(template)
+    load_rows(template, [NodeRow('lei:TESTCORPORATE', 'Company', 'Real Template Marker')], [], 'test-real', 'CC0')
+    try:
+        with TestClient(create_app(settings, real_store)) as client:
+            response = client.get('/api/entities/search', params={'workspace': workspace, 'q': 'Real Template'})
+            assert response.status_code == 200
+            assert response.json()['hits'][0]['id'] == 'lei:TESTCORPORATE'
+            for graph in (template, real_store.workspace(workspace)):
+                assert ro(graph, 'MATCH (e:Entity) RETURN count(e) AS n')[0]['n'] == 1
+                assert ro(graph, 'MATCH (p:Person) RETURN count(p) AS n')[0]['n'] == 0
+    finally:
+        if workspace in real_store.workspaces():
+            real_store.drop(workspace)
+        template.delete()

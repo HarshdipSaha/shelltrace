@@ -24,7 +24,7 @@ def test_pack_values_follow_documented_interpretations():
     assert (EU.threshold, EU.inclusive, EU.aggregate, EU.control_limb) == (50.0, True, True, True)
     assert (UK.threshold, UK.inclusive, UK.aggregate, UK.control_limb) == (50.0, False, False, True)
     assert OFAC.authorities == ("OFAC",) and EU.authorities == ("EU",) and UK.authorities == ("UK",)
-    assert "accounting_consolidation" in OFAC.basis_accepted
+    assert all('accounting_consolidation' not in pack.basis_accepted for pack in (OFAC, EU, UK))
     assert get_pack("UK") is UK
     assert PACKS == {"OFAC": OFAC, "EU": EU, "UK": UK}
 

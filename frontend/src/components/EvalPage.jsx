@@ -19,6 +19,8 @@ function formatRecall(value) {
 }
 
 function e3Recall(row, field, countField) {
+  const evaluated = row[countField.replace('_count', '_evaluated_n')];
+  if (evaluated != null && evaluated < row.n) return `Incomplete (${evaluated}/${row.n} evaluated)`;
   if (row.small_n) return `small n (${row[countField] ?? '—'}/${row.n ?? '—'})`;
   return formatRecall(row[field]);
 }
@@ -92,9 +94,10 @@ function EvalPage({ workspace = 'demo' }) {
 
         <section className="eval-section panel" aria-label="E3 recall by name visibility">
           <div className="section-heading"><div><p className="eyebrow">REAL-DATA EVALUATION</p><h2>E3 recall by name visibility</h2></div></div>
-          <div className="eval-table-wrap"><table><thead><tr><th>Authority</th><th>Stratum</th><th>n</th><th>Graph-flagged recall</th><th>Graph-blocked recall</th><th>Name-screen recall</th></tr></thead><tbody>
-            {e3Rows.length ? e3Rows.map((row, index) => <tr key={`${row.authority || 'all'}-${row.name_visibility || row.stratum || index}`}><td>{row.authority || '—'}</td><td>{row.name_visibility || row.stratum || row.name || '—'}</td><td>{row.n ?? '—'}</td><td>{e3Recall(row, 'graph_flagged_recall', 'graph_flagged_count')}</td><td>{e3Recall(row, 'graph_blocked_recall', 'graph_blocked_count')}</td><td>{e3Recall(row, 'name_screen_recall', 'name_screen_count')}</td></tr>) : <EmptyRow columns={6}>E3 recall results are not available yet.</EmptyRow>}
+          <div className="eval-table-wrap"><table><thead><tr><th>Authority</th><th>Date basis</th><th>Stratum</th><th>n</th><th>Graph-flagged recall</th><th>Graph-blocked recall</th><th>Name-screen recall</th></tr></thead><tbody>
+            {e3Rows.length ? e3Rows.map((row, index) => <tr key={`${row.authority}-${row.source_date_basis}-${row.stratum}-${index}`}><td>{row.authority || '—'}</td><td>{row.source_date_basis === 'first_seen_approximation' ? 'First observed (approximation)' : row.source_date_basis === 'source_date' ? 'Source listing date' : 'Not recorded'}</td><td>{row.name_visibility || row.stratum || row.name || '—'}</td><td>{row.n ?? '—'}</td><td>{e3Recall(row, 'graph_flagged_recall', 'graph_flagged_count')}</td><td>{e3Recall(row, 'graph_blocked_recall', 'graph_blocked_count')}</td><td>{e3Recall(row, 'name_screen_recall', 'name_screen_count')}</td></tr>) : <EmptyRow columns={7}>E3 recall results are not available yet.</EmptyRow>}
           </tbody></table></div>
+          {e3?.caveat && <p className="scope-note">{e3.caveat}</p>}
         </section>
       </div>
 

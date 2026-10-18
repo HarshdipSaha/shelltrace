@@ -27,3 +27,4 @@ npm-debug.log*
 # Local and derived data
 data/raw/
 eval/out/
+backend/eval/out/
