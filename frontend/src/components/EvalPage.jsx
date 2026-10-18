@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { evalLatest } from '../api.js';
+import ThemeControl from './ThemeControl.jsx';
 
 const asArray = (value) => Array.isArray(value) ? value : [];
 const asEntries = (value) => value && typeof value === 'object' && !Array.isArray(value) ? Object.entries(value) : [];
@@ -60,6 +61,7 @@ function EvalPage({ workspace = 'demo' }) {
       <header className="eval-page-header">
         <div><p className="eyebrow">SHELLTRACE / QUALITY EVALUATION</p><h1>Evaluation</h1><p>Golden behavior, ablations, real-data recall, and latency at the recorded snapshots.</p></div>
         <a className="quiet-button" href={`/?ws=${encodeURIComponent(workspace)}`}>Back to investigations</a>
+        <ThemeControl />
       </header>
       {loading && <p className="eval-status" role="status">Loading evaluation results…</p>}
       {error && <p className="inline-error" role="alert">{error}</p>}
@@ -108,7 +110,7 @@ function EvalPage({ workspace = 'demo' }) {
         </tbody></table></div>
       </section>
 
-      <footer className="eval-snapshots"><span>Snapshot versions</span>{asEntries(snapshots).length ? asEntries(snapshots).map(([name, version]) => <code key={name}>{name}: {version}</code>) : <code>Not recorded yet</code>}</footer>
+      <footer className="eval-snapshots"><span>Snapshot versions</span>{asEntries(snapshots).length ? asEntries(snapshots).map(([name, version]) => <code key={name}>{name}: {typeof version === 'object' && version ? Object.entries(version).map(([k, v]) => `${k}=${v}`).join(', ') : version}</code>) : <code>Not recorded yet</code>}</footer>
     </main>
   );
 }

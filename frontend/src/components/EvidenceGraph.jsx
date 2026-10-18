@@ -5,7 +5,24 @@ import { toElements } from '../graph/toElements.js';
 
 cytoscape.use(dagre);
 
-const graphStyle = [
+const graphStyle = (isDark = document.documentElement.dataset.theme === 'dark') => {
+  const palette = isDark
+    ? {
+      node: '#1b2936', nodeBorder: '#486174', nodeText: '#e2edf3', cluster: '#304454',
+      clusterBorder: '#668293', clusterText: '#b5c9d4', designated: '#9a4a54',
+      designatedBorder: '#e58089', edge: '#93adbb', edgeText: '#c5d5de', edgeLabel: '#151f2a',
+      proof: '#ff7d88', proofText: '#ffb4bc', decisive: '#ffd18b', expired: '#71828d',
+      flagged: '#ffd18b', flaggedText: '#ffe0aa', lit: '#ff7d88', target: '#7bd9c7',
+    }
+    : {
+      node: '#f3f7f8', nodeBorder: '#b7c9ce', nodeText: '#294552', cluster: '#e8f0f1',
+      clusterBorder: '#90a7ad', clusterText: '#71868c', designated: '#853b42',
+      designatedBorder: '#762e36', edge: '#85a1a9', edgeText: '#526e77', edgeLabel: '#fff',
+      proof: '#bc4148', proofText: '#9d3039', decisive: '#d39b42', expired: '#929da2',
+      flagged: '#bd842b', flaggedText: '#986916', lit: '#d34b4e', target: '#176f70',
+    };
+
+  return [
   {
     selector: 'node',
     style: {
@@ -14,10 +31,10 @@ const graphStyle = [
       width: 138,
       height: 52,
       padding: '6px',
-      'background-color': '#f3f7f8',
-      'border-color': '#b7c9ce',
+      'background-color': palette.node,
+      'border-color': palette.nodeBorder,
       'border-width': 1,
-      color: '#294552',
+      color: palette.nodeText,
       'font-size': 10,
       'font-weight': 600,
       'text-wrap': 'wrap',
@@ -31,12 +48,12 @@ const graphStyle = [
     style: {
       label: 'data(label)',
       shape: 'round-rectangle',
-      'background-color': '#e8f0f1',
+      'background-color': palette.cluster,
       'background-opacity': 0.36,
-      'border-color': '#90a7ad',
+      'border-color': palette.clusterBorder,
       'border-style': 'dashed',
       'border-width': 1,
-      color: '#71868c',
+      color: palette.clusterText,
       'font-size': 8,
       'font-weight': 500,
       padding: '18px',
@@ -48,15 +65,15 @@ const graphStyle = [
   {
     selector: 'node.designated',
     style: {
-      'background-color': '#853b42',
-      'border-color': '#762e36',
+      'background-color': palette.designated,
+      'border-color': palette.designatedBorder,
       color: '#fff8f6',
     },
   },
   {
     selector: 'node.target',
     style: {
-      'border-color': '#176f70',
+      'border-color': palette.target,
       'border-width': 3,
     },
   },
@@ -65,16 +82,16 @@ const graphStyle = [
     style: {
       label: 'data(label)',
       width: 2,
-      'line-color': '#85a1a9',
-      'target-arrow-color': '#85a1a9',
+      'line-color': palette.edge,
+      'target-arrow-color': palette.edge,
       'target-arrow-shape': 'triangle',
       'arrow-scale': 0.8,
       'curve-style': 'bezier',
       'control-point-step-size': 30,
       'font-size': 8,
-      color: '#526e77',
+      color: palette.edgeText,
       'text-rotation': 'autorotate',
-      'text-background-color': '#fff',
+      'text-background-color': palette.edgeLabel,
       'text-background-opacity': 0.92,
       'text-background-padding': 2,
       'text-margin-y': -5,
@@ -84,9 +101,9 @@ const graphStyle = [
     selector: 'edge.proof',
     style: {
       width: 4,
-      'line-color': '#bc4148',
-      'target-arrow-color': '#bc4148',
-      color: '#9d3039',
+      'line-color': palette.proof,
+      'target-arrow-color': palette.proof,
+      color: palette.proofText,
       'font-weight': 700,
       'z-index': 5,
     },
@@ -94,7 +111,7 @@ const graphStyle = [
   {
     selector: 'edge.decisive',
     style: {
-      'line-outline-color': '#d39b42',
+      'line-outline-color': palette.decisive,
       'line-outline-width': 2,
     },
   },
@@ -102,8 +119,8 @@ const graphStyle = [
     selector: 'edge.expired',
     style: {
       'line-style': 'dashed',
-      'line-color': '#929da2',
-      'target-arrow-color': '#929da2',
+      'line-color': palette.expired,
+      'target-arrow-color': palette.expired,
       opacity: 0.5,
     },
   },
@@ -117,20 +134,21 @@ const graphStyle = [
   {
     selector: 'edge.flagged',
     style: {
-      'line-color': '#bd842b',
-      'target-arrow-color': '#bd842b',
-      color: '#986916',
+      'line-color': palette.flagged,
+      'target-arrow-color': palette.flagged,
+      color: palette.flaggedText,
     },
   },
   {
     selector: 'edge.lit',
     style: {
       width: 5,
-      'line-color': '#d34b4e',
-      'target-arrow-color': '#d34b4e',
+      'line-color': palette.lit,
+      'target-arrow-color': palette.lit,
     },
   },
-];
+  ];
+};
 
 const compareProofOrder = (left, right) => (
   (left.data.hop ?? Number.MAX_SAFE_INTEGER) - (right.data.hop ?? Number.MAX_SAFE_INTEGER)
@@ -154,7 +172,7 @@ function EvidenceGraph({ result, onSelect }) {
     const cy = cytoscape({
       container: containerRef.current,
       elements: [...graph.nodes, ...graph.edges],
-      style: graphStyle,
+      style: graphStyle(),
       layout: {
         name: 'dagre',
         rankDir: 'TB',
@@ -173,6 +191,8 @@ function EvidenceGraph({ result, onSelect }) {
       ? null
       : new ResizeObserver(() => cy.resize());
     resizeObserver?.observe(containerRef.current);
+    const themeObserver = new MutationObserver(() => cy.style(graphStyle()));
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
     cy.on('tap', 'edge', (event) => {
       const edge = event.target;
@@ -195,6 +215,7 @@ function EvidenceGraph({ result, onSelect }) {
     return () => {
       timers.forEach(window.clearTimeout);
       resizeObserver?.disconnect();
+      themeObserver.disconnect();
       cy.destroy();
     };
   }, [result, onSelect, graph.nodes, graph.edges, proofEdges]);

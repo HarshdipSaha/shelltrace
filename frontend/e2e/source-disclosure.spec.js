@@ -36,3 +36,21 @@ test('E3 separates observation dates and shows incomplete metrics honestly', asy
   await expect(table).toContainText('Incomplete (3/4 evaluated)');
   await expect(table).not.toContainText('%');
 });
+
+test('appearance choice is saved and applies to the workspace and evaluation view', async ({ page }) => {
+  await page.route('**/api/health', route => route.fulfill({ json: { status: 'ok', graph: 'theme-test', llm: 'deterministic' } }));
+  await page.goto('/');
+  const appearance = page.getByRole('combobox', { name: 'Appearance' });
+  await appearance.selectOption('dark');
+  await expect.poll(() => page.locator('html').getAttribute('data-theme')).toBe('dark');
+  await expect(page.locator('html')).toHaveCSS('background-color', 'rgb(13, 21, 30)');
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('shelltrace-theme'))).toBe('dark');
+  await page.goto('/#/eval');
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await expect(page.getByRole('combobox', { name: 'Appearance' })).toHaveValue('dark');
+  await page.getByRole('combobox', { name: 'Appearance' }).selectOption('light');
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator('.theme-control')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+});

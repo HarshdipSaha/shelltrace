@@ -14,6 +14,7 @@ import SearchPanel from './components/SearchPanel.jsx';
 import TimeSlider from './components/TimeSlider.jsx';
 import Timeline from './components/Timeline.jsx';
 import WatchBar from './components/WatchBar.jsx';
+import ThemeControl from './components/ThemeControl.jsx';
 
 const INITIAL_FORM = {
   workspace: 'demo',
@@ -200,6 +201,7 @@ function App() {
           <strong>Sanctions exposure review</strong>
         </div>
         <a className="evaluation-link" href="#/eval">Evaluation</a>
+        <ThemeControl />
         <div className="service-status" aria-live="polite">
           <span className={`status-dot ${service.health?.status === 'ok' ? 'status-dot--live' : ''}`} />
           <span>{service.loading ? 'Connecting to graph' : service.health?.status === 'ok' ? 'Graph connected' : 'Graph unavailable'}</span>
